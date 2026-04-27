@@ -5,7 +5,7 @@ import logging
 import requests
 from scipy.stats import poisson
 
-# Librerías actualizadas
+# Librerías
 from google import genai
 from google.genai import types
 import telebot
@@ -28,11 +28,11 @@ URL_JSON = "https://raw.githubusercontent.com/gjoe9955-netizen/entrenador2/main/
 
 bot = AsyncTeleBot(TOKEN)
 
-# --- Estado del Sistema ---
+# --- Estado del Sistema (Nodos Originales Restaurados) ---
 SISTEMA_IA = {
     "estratega": {"api": None, "nodo": None},
     "auditor": {"api": None, "nodo": None},
-    "nodos_gemini": ['gemini-2.0-flash-exp', 'gemini-1.5-flash'],
+    "nodos_gemini": ['gemini-2.5-flash-lite', 'gemini-3.1-flash-lite-preview'],
     "nodos_nvidia": ['meta/llama-3.1-70b-instruct', 'meta/llama-3.1-8b-instruct']
 }
 
@@ -46,7 +46,7 @@ async def ejecutar_ia(api, nodo, prompt):
                 client.models.generate_content, 
                 model=nodo, 
                 contents=prompt,
-                config=types.GenerateContentConfig(max_output_tokens=450, temperature=0.1)
+                config=types.GenerateContentConfig(max_output_tokens=400, temperature=0.1)
             )
             return res.text
         except Exception as e: return f"❌ Error Gemini: {str(e)[:50]}"
@@ -56,7 +56,7 @@ async def ejecutar_ia(api, nodo, prompt):
         payload = {
             "model": nodo,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1, "max_tokens": 450
+            "temperature": 0.1, "max_tokens": 400
         }
         try:
             r = await asyncio.to_thread(requests.post, url, headers=headers, json=payload, timeout=20)
@@ -86,7 +86,7 @@ async def obtener_dict_motivacion():
 @bot.message_handler(commands=['config', 'test'])
 async def cmd_config(message):
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🧠 ASIGNAR ESTRATEGA (IA 1)", callback_data="set_estratega"))
-    await bot.reply_to(message, "🛠 **MODO PROFESIONAL**\nConfigura la jerarquía de análisis:", reply_markup=markup, parse_mode='Markdown')
+    await bot.reply_to(message, "🛠 **CONFIGURACIÓN HÍBRIDA**\nSelecciona el rol:", reply_markup=markup, parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith(('set_', 'api_', 'save_')))
 async def cb_config_handler(call):
@@ -96,7 +96,7 @@ async def cb_config_handler(call):
             InlineKeyboardButton("Google Gemini", callback_data=f"api_{rol}_GEMINI"),
             InlineKeyboardButton("NVIDIA NIM", callback_data=f"api_{rol}_NVIDIA")
         )
-        await bot.edit_message_text(f"Selecciona API para el **{rol.upper()}**:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+        await bot.edit_message_text(f"API para **{rol.upper()}**:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
     
     elif call.data.startswith('api_'):
         _, rol, api = call.data.split('_')
@@ -104,24 +104,24 @@ async def cb_config_handler(call):
         nodos = SISTEMA_IA["nodos_gemini"] if api == 'GEMINI' else SISTEMA_IA["nodos_nvidia"]
         for n in nodos:
             markup.add(InlineKeyboardButton(n.split('/')[-1], callback_data=f"save_{rol}_{api}_{n}"))
-        await bot.edit_message_text(f"Elige el nodo para el {rol}:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        await bot.edit_message_text(f"Nodo para {rol}:", call.message.chat.id, call.message.message_id, reply_markup=markup)
     
     elif call.data.startswith('save_'):
         _, rol, api, nodo = call.data.split('_')
         SISTEMA_IA[rol] = {"api": api, "nodo": nodo}
         if rol == "estratega":
-            markup = InlineKeyboardMarkup().add(InlineKeyboardButton("➕ AÑADIR AUDITOR (IA 2)", callback_data="set_auditor"))
-            await bot.edit_message_text(f"✅ **IA 1 (Estratega) Lista.**\n¿Deseas una segunda opinión para coherencia?", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+            markup = InlineKeyboardMarkup().add(InlineKeyboardButton("➕ AÑADIR AUDITOR", callback_data="set_auditor"))
+            await bot.edit_message_text(f"✅ **Estratega fijado:** `{nodo.split('/')[-1]}`", call.message.chat.id, call.message.message_id, reply_markup=markup)
         else:
-            resumen = (f"🚀 **SISTEMA DUAL CONFIGURADO**\n\n🧠 **Estratega:** `{SISTEMA_IA['estratega']['nodo'].split('/')[-1]}`\n⚖️ **Auditor:** `{SISTEMA_IA['auditor']['nodo'].split('/')[-1]}`")
+            resumen = (f"🚀 **SISTEMA CONFIGURADO**\n🧠 Estratega: `{SISTEMA_IA['estratega']['nodo'].split('/')[-1]}`\n⚖️ Auditor: `{SISTEMA_IA['auditor']['nodo'].split('/')[-1]}`")
             await bot.edit_message_text(resumen, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
 
-# --- Procesamiento de Pronóstico con Consenso ---
+# --- Pronóstico con Consenso Profesional ---
 
 @bot.message_handler(commands=['pronostico', 'valor'])
 async def handle_analisis(message):
     if not SISTEMA_IA["estratega"]["nodo"]:
-        await bot.reply_to(message, "⚠️ Configura la IA con `/config` primero."); return
+        await bot.reply_to(message, "⚠️ Configura la IA con `/config`."); return
     
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2 or " vs " not in parts[1]:
@@ -130,9 +130,7 @@ async def handle_analisis(message):
     l_q, v_q = [t.strip() for t in parts[1].split(" vs ")]
     full_data = obtener_datos_poisson()
     motivacion = await obtener_dict_motivacion()
-    
-    # Cuotas (Simuladas o vía API)
-    c_l, c_e, c_v = 1.75, 4.30, 4.60 
+    c_l, c_e, c_v = 1.75, 4.30, 4.60 # Simulación
 
     if not full_data: return
     liga_key = next(iter(full_data))
@@ -140,9 +138,8 @@ async def handle_analisis(message):
     m_v = next((t for t in full_data[liga_key]['teams'] if t.lower() in v_q.lower()), None)
     
     if not m_l or not m_v:
-        await bot.reply_to(message, "❌ Equipo no encontrado. Revisa `/equipos`."); return
+        await bot.reply_to(message, "❌ Equipo no encontrado."); return
 
-    # Poisson local
     l_s, v_s = full_data[liga_key]['teams'][m_l], full_data[liga_key]['teams'][m_v]
     avg = full_data[liga_key]['averages']
     lh = l_s['att_h'] * v_s['def_a'] * avg['league_home']
@@ -157,31 +154,27 @@ async def handle_analisis(message):
 
     prob_p = ph * 100
     edge = prob_p - (100 / c_l)
-
     msg_espera = await bot.reply_to(message, "🧬 Generando reporte profesional...")
-
     header = (f"🛠 **REPORTE:** ✅ Cuotas ({c_l}/{c_e}/{c_v}) | ✅ Poisson ({prob_p:.1f}%) | ✅ Tabla (Check)\n{'—'*20}\n")
 
-    # PROMPT ESTRATEGA (Jerarquía y Valor)
+    # Prompt Estratega
     prompt_e = (
-        f"Eres un analista senior. Partido: {m_l} vs {m_v}.\n"
+        f"Analista senior. Partido: {m_l} vs {m_v}.\n"
         f"POISSON: {prob_p:.1f}% | CUOTA: {c_l} | EDGE: {edge:.1f}%\n"
-        f"CONSTRÚYELO ASÍ:\n"
-        f"💎 **NIVEL:** [DIAMANTE/ORO/PLATA] | STAKE: [X/5]\n"
-        f"🔥 **ANÁLISIS DE VALOR:** [Explica la ineficiencia de mercado en 3 líneas]\n"
+        f"FORMATO: 💎 **NIVEL:** [DIAMANTE/ORO/PLATA] | STAKE: [X/5]\n"
+        f"🔥 **ANÁLISIS DE VALOR:** [Ineficiencia de mercado en 3 líneas]\n"
         f"🎯 **PICK:** [Victoria X] | 💰 **CUOTA:** {c_l} | 📊 **EDGE:** {edge:.1f}%"
     )
     res_e = await ejecutar_ia(SISTEMA_IA["estratega"]["api"], SISTEMA_IA["estratega"]["nodo"], prompt_e)
 
-    # PROMPT AUDITOR (Congruencia y Puntos Ciegos)
+    # Prompt Auditor para Consenso
     if SISTEMA_IA["auditor"]["nodo"]:
-        await bot.edit_message_text(f"{header}⚖️ IA Auditora validando reporte...", message.chat.id, msg_espera.message_id)
+        await bot.edit_message_text(f"{header}⚖️ IA Auditora validando...", message.chat.id, msg_espera.message_id)
         prompt_a = (
-            f"Analiza el reporte de tu colega: '{res_e}'.\n"
-            f"Busca PUNTOS CIEGOS (lesiones, rachas o trampas de mercado).\n"
-            "RESPONDE SIGUIENDO ESTE FORMATO:\n"
-            "⚠️ **PUNTOS CIEGOS:** [Máximo 3 líneas]\n"
-            "✅ **VEREDICTO:** [Confirmado / Ajustar nivel]"
+            f"Analiza la propuesta: '{res_e}'.\n"
+            "Busca PUNTOS CIEGOS reales (lesiones, rachas).\n"
+            "FORMATO: ⚠️ **PUNTOS CIEGOS:** [Máximo 3 líneas]\n"
+            "✅ **VEREDICTO:** [Confirmado / Ajustado]"
         )
         res_a = await ejecutar_ia(SISTEMA_IA["auditor"]["api"], SISTEMA_IA["auditor"]["nodo"], prompt_a)
         reporte_final = f"{header}{res_e}\n\n{res_a}"
@@ -190,7 +183,7 @@ async def handle_analisis(message):
 
     await bot.edit_message_text(reporte_final, message.chat.id, msg_espera.message_id, parse_mode='Markdown')
 
-# --- Gestión de Ayuda y Equipos ---
+# --- Comandos Adicionales ---
 
 @bot.message_handler(commands=['equipos'])
 async def cmd_equipos(message):
@@ -198,27 +191,21 @@ async def cmd_equipos(message):
     if data:
         liga = next(iter(data))
         equipos = ", ".join([f"`{e}`" for e in data[liga]['teams'].keys()])
-        await bot.reply_to(message, f"📋 **EQUIPOS EN SISTEMA:**\n\n{equipos}", parse_mode='Markdown')
+        await bot.reply_to(message, f"📋 **EQUIPOS DISPONIBLES:**\n\n{equipos}", parse_mode='Markdown')
 
 @bot.message_handler(commands=['help', 'start'])
 async def cmd_help(message):
     help_text = (
         "🤖 **BOT MULTI-API POISSON V2.5**\n\n"
-        "🛠 **COMANDOS OPERATIVOS:**\n"
-        "• `/config` - Configura el equipo de IAs (Estratega y Auditor).\n"
-        "• `/pronostico Local vs Visitante` - Genera el reporte de valor DIAMANTE/ORO.\n"
-        "• `/equipos` - Muestra la lista de nombres aceptados por el modelo.\n"
-        "• `/test` - Alias rápido para re-configurar nodos.\n\n"
-        "📊 **FLUJO DE TRABAJO:**\n"
-        "1. El sistema verifica Poisson, Cuotas y Posición en Tabla.\n"
-        "2. El **Estratega** busca ineficiencias de mercado.\n"
-        "3. El **Auditor** busca puntos ciegos para asegurar la congruencia.\n\n"
-        "💡 *Usa siempre el formato 'A vs B' para que el bot identifique los equipos.*"
+        "🛠 **COMANDOS:**\n"
+        "• `/config` o `/test` - Configura Estratega y Auditor.\n"
+        "• `/pronostico A vs B` - Reporte con análisis de valor y consenso.\n"
+        "• `/equipos` - Listado de nombres para el modelo.\n\n"
+        "💡 *El sistema integra Poisson, Odds y Football-Data para un análisis Diamante.*"
     )
     await bot.reply_to(message, help_text, parse_mode='Markdown')
 
 async def main():
-    logger.info("🚀 Sistema Híbrido Profesional Iniciado.")
     await bot.polling(non_stop=True)
 
 if __name__ == "__main__":
