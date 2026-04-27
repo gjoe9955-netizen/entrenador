@@ -32,7 +32,7 @@ bot = AsyncTeleBot(TOKEN)
 genai.configure(api_key=GEMINI_KEY)
 config_ia = {"modelo_actual": None}
 
-# --- FUNCIONES DE SOPORTE ---
+# --- FUNCIONES DE SOPORTE Y ACCIONES ---
 
 async def obtener_modelos_reales(api_key):
     try:
@@ -58,7 +58,28 @@ def obtener_datos_poisson():
         return response.json() if response.status_code == 200 else None
     except: return None
 
-# --- COMANDOS FOOTBALL DATA ---
+async def obtener_dict_motivacion():
+    """ACCIÓN: Clasifica urgencia competitiva basada en la tabla real"""
+    if not FOOTBALL_DATA_KEY: return {}
+    headers = {'X-Auth-Token': FOOTBALL_DATA_KEY}
+    try:
+        r = requests.get("https://api.football-data.org/v4/competitions/PD/standings", headers=headers, timeout=10)
+        if r.status_code != 200: return {}
+        standings = r.json()['standings'][0]['table']
+        motivaciones = {}
+        for t in standings:
+            nombre = t['team']['shortName']
+            pos = t['position']
+            if pos <= 4: sit = "🏆 CHAMPIONS (Máxima)"
+            elif 5 <= pos <= 7: sit = "🇪🇺 EUROPA (Alta)"
+            elif pos >= 18: sit = "🆘 DESCENSO (Crítica)"
+            elif 8 <= pos <= 13: sit = "🛋️ MEDIA (Relajación)"
+            else: sit = "⚠️ MEDIA-BAJA (Alerta)"
+            motivaciones[nombre] = {"pos": pos, "situacion": sit}
+        return motivaciones
+    except: return {}
+
+# --- COMANDOS DE INFORMACIÓN ---
 
 @bot.message_handler(commands=['tabla'])
 async def cmd_tabla(message):
@@ -108,19 +129,27 @@ async def cmd_proximos(message):
 @bot.message_handler(commands=['start', 'help'])
 async def cmd_help(message):
     help_text = (
-        "⚽ **SISTEMA DE PREDICCIÓN Y VALOR**\n\n"
-        "🤖 **CONFIGURACIÓN IA:**\n"
-        "🔍 `/test` - Escanea nodos de IA y permite seleccionar el motor activo (Flash/Pro).\n"
-        "🧠 `/modelo` - Muestra qué nodo de IA está configurado actualmente.\n\n"
-        "📈 **ANÁLISIS Y PREDICCIÓN:**\n"
-        "🎯 `/pronostico Local vs Visitante` - Genera análisis completo cruzando Poisson, Rachas y Cuotas.\n"
-        "📋 `/equipos` - Muestra la lista de equipos soportados por el modelo de datos local.\n"
-        "📜 `/historial` - Muestra los últimos 5 pronósticos generados.\n\n"
-        "📊 **DATOS EN TIEMPO REAL (LALIGA):**\n"
-        "🏆 `/tabla` - Muestra el Top 10 de la clasificación actual.\n"
-        "⚽ `/goleadores` - Lista los 10 jugadores con más goles actualmente.\n"
-        "📅 `/proximos` - Muestra los siguientes 8 partidos programados.\n\n"
-        "⚠️ *Nota: Escribe los equipos tal como aparecen en /equipos para evitar errores.*"
+        "⚽ **GUÍA DEL SISTEMA PREDICCIÓN V2.0**\n\n"
+        "🛠 **PASO 1: CONFIGURACIÓN**\n"
+        "• `/test` - Escaneo invisible de nodos Gemini. **Obligatorio** elegir uno para activar el bot.\n"
+        "• `/modelo` - Verifica qué cerebro de IA está procesando los datos.\n\n"
+        "📈 **PASO 2: ANÁLISIS DE VALOR**\n"
+        "• `/pronostico Local vs Visitante` - Ejecuta el motor híbrido:\n"
+        "  1. Calcula **Poisson** (Estadística pura).\n"
+        "  2. Cruza con **Motivación** (Posición en tabla/Urgencia).\n"
+        "  3. Analiza **Edge** (Ventaja real contra la casa).\n\n"
+        "📊 **HERRAMIENTAS DE DATOS:**\n"
+        "• `/equipos` - Nombres exactos aceptados por el modelo.\n"
+        "• `/tabla` - Clasificación en tiempo real.\n"
+        "• `/goleadores` - Top artilleros de la liga.\n"
+        "• `/proximos` - Calendario de próximos encuentros.\n"
+        "• `/historial` - Consulta los últimos aciertos y picks.\n\n"
+        "💎 **INTERPRETACIÓN DE NIVELES:**\n"
+        "🥉 **BRONCE:** Valor estadístico leve.\n"
+        "🥈 **PLATA:** Ventaja sólida. Recomendado Stake 2-3.\n"
+        "🥇 **ORO:** Discrepancia alta (Pepita de Oro).\n"
+        "💎 **DIAMANTE:** Edge >10% + Urgencia crítica en tabla.\n\n"
+        "⚠️ *Consejo: Usa `/proximos` para ver qué partido toca y copia los nombres de `/equipos`.*"
     )
     await bot.reply_to(message, help_text, parse_mode='Markdown')
 
@@ -154,6 +183,11 @@ async def cb_set_model(call):
     config_ia["modelo_actual"] = call.data.split('_')[1]
     await bot.edit_message_text(f"✅ **NODO SELECCIONADO:** `{config_ia['modelo_actual']}`", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
 
+@bot.message_handler(commands=['modelo'])
+async def cmd_modelo(message):
+    mod = config_ia.get("modelo_actual", "Ninguno")
+    await bot.reply_to(message, f"🧠 **NODO ACTIVO:** `{mod}`", parse_mode='Markdown')
+
 @bot.message_handler(commands=['pronostico', 'valor'])
 async def handle_analisis(message):
     if not config_ia["modelo_actual"]:
@@ -163,7 +197,11 @@ async def handle_analisis(message):
         await bot.reply_to(message, "⚠️ Usa: `/pronostico Local vs Visitante`."); return
 
     l_q, v_q = [t.strip() for t in parts[1].split(" vs ")]
+    
+    # Acción de Contexto
+    dict_motivacion = await obtener_dict_motivacion()
     full_data = obtener_datos_poisson()
+    
     if not full_data: return
 
     liga_key = next(iter(full_data))
@@ -172,8 +210,9 @@ async def handle_analisis(message):
     m_v = next((t for t in data_liga['teams'] if t.lower() in v_q.lower() or v_q.lower() in t.lower()), None)
     
     if not m_l or not m_v:
-        await bot.reply_to(message, "❌ Equipo no hallado."); return
+        await bot.reply_to(message, "❌ Equipo no hallado en base local."); return
 
+    # Poisson
     l_s, v_s = data_liga['teams'][m_l], data_liga['teams'][m_v]
     avg = data_liga['averages']
     lh = l_s['att_h'] * v_s['def_a'] * avg['league_home']
@@ -186,12 +225,20 @@ async def handle_analisis(message):
             elif x == y: pd += p
             else: pa += p
 
-    sent = await bot.reply_to(message, f"📈 Analizando {m_l} vs {m_v}...")
+    sent = await bot.reply_to(message, f"📈 Analizando {m_l} vs {m_v} + Motivación...")
     
-    header_checks = "🛠 **REPORTE:** ✅ Cuotas | ✅ Poisson | ✅ Rachas\n"
+    info_l = dict_motivacion.get(m_l, {"pos": "?", "situacion": "Sin datos de tabla"})
+    info_v = dict_motivacion.get(m_v, {"pos": "?", "situacion": "Sin datos de tabla"})
+    
+    header_checks = f"🛠 **REPORTE:** {'✅' if dict_motivacion else '❌'} Tabla | ✅ Poisson\n"
     try:
         model = genai.GenerativeModel(config_ia["modelo_actual"])
-        prompt = f"Analiza {m_l} vs {m_v}. Poisson: L {ph*100:.1f}%, E {pd*100:.1f}%, V {pa*100:.1f}%. Define Nivel (BRONCE/PLATA/ORO/DIAMANTE) y Stake."
+        prompt = (
+            f"Analiza {m_l} vs {m_v}.\n"
+            f"TABLA: {m_l} (Pos {info_l['pos']} - {info_l['situacion']}), {m_v} (Pos {info_v['pos']} - {info_v['situacion']}).\n"
+            f"POISSON: L {ph*100:.1f}%, E {pd*100:.1f}%, V {pa*100:.1f}%.\n"
+            "Define NIVEL (BRONCE/PLATA/ORO/DIAMANTE), STAKE y justifica si la posición en tabla altera el valor estadístico."
+        )
         response = await asyncio.to_thread(model.generate_content, prompt)
         await bot.edit_message_text(header_checks + response.text, message.chat.id, sent.message_id, parse_mode='Markdown')
     except: pass
