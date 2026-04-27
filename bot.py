@@ -89,18 +89,33 @@ def obtener_contexto_gratuito(local, visitante):
     except: return "Error en rachas."
 
 def obtener_cuotas_reales(local, visitante):
-    if not ODDS_API_KEY: return None
+    if not ODDS_API_KEY: 
+        logger.warning("[ODDS] No hay ODDS_API_KEY configurada.")
+        return None
     ligas = ["soccer_spain_la_liga", "soccer_spain_segunda_division"]
     try:
         for liga in ligas:
+            logger.info(f"[ODDS] Consultando API para liga: {liga}")
             url = f"https://api.the-odds-api.com/v1/sports/{liga}/odds/"
             params = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h", "oddsFormat": "decimal"}
             r = requests.get(url, params=params, timeout=10)
-            if r.status_code != 200: continue
-            for match in r.json():
-                h, a = match['home_team'].lower(), match['away_team'].lower()
+            
+            if r.status_code != 200:
+                logger.error(f"[ODDS] Error API {liga} ({r.status_code}): {r.text}")
+                continue
+                
+            data = r.json()
+            logger.info(f"[ODDS] Recibidos {len(data)} partidos de {liga}")
+            
+            for match in data:
+                h_api, a_api = match['home_team'].lower(), match['away_team'].lower()
                 l_q, v_q = local.lower(), visitante.lower()
-                if (l_q in h or h in l_q) and (v_q in a or a in v_q):
+                
+                # Log de comparación para detectar diferencias de nombre
+                logger.info(f"[ODDS] Comparando: [{l_q} vs {v_q}] con API: [{h_api} vs {a_api}]")
+                
+                if (l_q in h_api or h_api in l_q) and (v_q in a_api or a_api in v_q):
+                    logger.info(f"[ODDS] ✅ Match encontrado en {liga}")
                     bookie = match['bookmakers'][0]
                     cuotas = bookie['markets'][0]['outcomes']
                     res_cuotas = {}
@@ -109,8 +124,12 @@ def obtener_cuotas_reales(local, visitante):
                         elif o['name'] == match['away_team']: res_cuotas['V'] = o['price']
                         else: res_cuotas['E'] = o['price']
                     return {"bookie": bookie['title'], "precios": res_cuotas}
+        
+        logger.warning(f"[ODDS] Fin de búsqueda. No se encontró {local} vs {visitante}")
         return None
-    except: return None
+    except Exception as e:
+        logger.error(f"[ODDS] Error crítico: {e}")
+        return None
 
 # --- COMANDOS ---
 
@@ -179,7 +198,6 @@ async def handle_analisis(message):
     if not m_l or not m_v:
         await bot.reply_to(message, "❌ Equipo no hallado. Mira `/equipos`."); return
 
-    # Cálculos Poisson
     l_s, v_s = data_liga['teams'][m_l], data_liga['teams'][m_v]
     avg = data_liga['averages']
     lh = l_s['att_h'] * v_s['def_a'] * avg['league_home']
