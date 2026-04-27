@@ -71,7 +71,6 @@ def calcular_probabilidades(local_q, visitante_q):
     data = data_full["LaLiga"]
     teams = data["teams"]
     
-    # Búsqueda flexible de nombres
     m_l = next((t for t in teams if local_q.lower() in t.lower()), None)
     m_v = next((t for t in teams if visitante_q.lower() in t.lower()), None)
     
@@ -145,7 +144,28 @@ async def handle_pronostico(message):
     
     try:
         model = genai.GenerativeModel(config_ia["modelo_actual"])
-        prompt = f"Analiza como experto en Value Betting:\nPARTIDO: {res['n_l']} vs {res['n_v']}\nPOISSON: L {res['ph']*100:.1f}%, E {res['pd']*100:.1f}%, V {res['pa']*100:.1f}%\n{contexto}\n\nResponde con este formato:\n🔥 ANÁLISIS: [Breve]\n🎯 PICK: [Mercado]\n💰 CUOTA SUGERIDA: [X.XX]\n⚠️ CONFIANZA: [Nivel]\nPICK_RESUMEN: [4 palabras]"
+        
+        # PROMPT MEJORADO (Estilo Experto Tipster)
+        prompt = f"""
+Actúa como un Senior Tipster experto en LaLiga con 20 años de experiencia en análisis estadístico.
+Tu objetivo es vender este pick a un grupo de apostadores exigentes.
+
+DATOS DEL PARTIDO:
+⚽ Encuentro: {res['n_l']} vs {res['n_v']}
+📊 Probabilidades Poisson: Victoria {res['n_l']} ({res['ph']*100:.1f}%), Empate ({res['pd']*100:.1f}%), Victoria {res['n_v']} ({res['pa']*100:.1f}%)
+📈 Rachas Recientes: {contexto}
+
+ESTRUCTURA DE RESPUESTA (Obligatoria):
+1️⃣ **EL OJO DEL EXPERTO**: Un párrafo potente explicando la dinámica del partido basada en los datos.
+2️⃣ **MARCADOR PROBABLE**: Dibuja el escenario exacto más factible.
+3️⃣ **PICK DE VALOR**: El mercado con mejor relación riesgo/beneficio.
+4️⃣ **STAKE/CONFIANZA**: [1 al 10]
+
+Finaliza siempre con:
+PICK_RESUMEN: [4 palabras clave en mayúsculas]
+
+⚠️ REGLA DE ORO: Sé directo, profesional y usa emojis futboleros. No divagues.
+"""
         
         response = await asyncio.to_thread(model.generate_content, prompt)
         await bot.edit_message_text(response.text, message.chat.id, sent.message_id)
