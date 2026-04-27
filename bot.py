@@ -32,7 +32,8 @@ bot = AsyncTeleBot(TOKEN)
 genai.configure(api_key=GEMINI_KEY)
 config_ia = {"modelo_actual": None}
 
-# --- MOTOR DE TEST (INTACTO) ---
+# --- FUNCIONES DE SOPORTE ---
+
 async def obtener_modelos_reales(api_key):
     try:
         genai.configure(api_key=api_key)
@@ -50,7 +51,6 @@ async def obtener_modelos_reales(api_key):
         return aptos[:6]
     except: return []
 
-# --- FUNCIONES DE DATOS ---
 def obtener_datos_poisson():
     try:
         headers = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
@@ -62,7 +62,7 @@ def obtener_contexto_gratuito(local, visitante):
     if not FOOTBALL_DATA_KEY: return "Error: API Key no configurada."
     headers = {'X-Auth-Token': FOOTBALL_DATA_KEY}
     base_url = "https://api.football-data.org/v4/"
-    competiciones = ["PD", "2017"] # PD = LaLiga, 2017 = Segunda
+    competiciones = ["PD", "2017"]
     matches = []
     try:
         for comp in competiciones:
@@ -90,7 +90,6 @@ def obtener_contexto_gratuito(local, visitante):
 
 def obtener_cuotas_reales(local, visitante):
     if not ODDS_API_KEY: return None
-    # Probamos en La Liga y Segunda
     ligas = ["soccer_spain_la_liga", "soccer_spain_segunda_division"]
     try:
         for liga in ligas:
@@ -98,11 +97,9 @@ def obtener_cuotas_reales(local, visitante):
             params = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h", "oddsFormat": "decimal"}
             r = requests.get(url, params=params, timeout=10)
             if r.status_code != 200: continue
-            
             for match in r.json():
                 h, a = match['home_team'].lower(), match['away_team'].lower()
                 l_q, v_q = local.lower(), visitante.lower()
-                # Búsqueda flexible mejorada
                 if (l_q in h or h in l_q) and (v_q in a or a in v_q):
                     bookie = match['bookmakers'][0]
                     cuotas = bookie['markets'][0]['outcomes']
@@ -115,46 +112,74 @@ def obtener_cuotas_reales(local, visitante):
         return None
     except: return None
 
-# --- HANDLERS ---
+# --- COMANDOS ---
+
+@bot.message_handler(commands=['start', 'help'])
+async def cmd_help(message):
+    help_text = (
+        "⚽ **SISTEMA DE PREDICCIÓN Y VALOR**\n\n"
+        "🔍 `/test` - Escanea y lista nodos de IA disponibles. **Debes usarlo primero.**\n"
+        "📈 `/pronostico Local vs Visitante` - Genera análisis completo cruzando Poisson, Rachas y Cuotas.\n"
+        "📋 `/equipos` - Muestra la lista de equipos aceptados por el modelo Poisson.\n"
+        "🧠 `/modelo` - Muestra qué nodo de IA tienes seleccionado actualmente.\n"
+        "📜 `/historial` - Muestra los últimos 5 pronósticos guardados en GitHub.\n\n"
+        "⚠️ *Nota: Escribe los nombres de los equipos tal cual aparecen en /equipos.*"
+    )
+    await bot.reply_to(message, help_text, parse_mode='Markdown')
+
 @bot.message_handler(commands=['test'])
 async def cmd_test(message):
-    wait = await bot.reply_to(message, "🔍 Escaneando nodos...")
+    wait = await bot.reply_to(message, "🔍 Escaneando nodos disponibles...")
     modelos = await obtener_modelos_reales(GEMINI_KEY)
     await bot.delete_message(message.chat.id, wait.message_id)
     if not modelos:
-        await bot.reply_to(message, "❌ Sin nodos."); return
+        await bot.reply_to(message, "❌ No se encontraron nodos activos."); return
     markup = InlineKeyboardMarkup()
-    for m in modelos: markup.add(InlineKeyboardButton(f"Nodo: {m}", callback_data=f"set_{m}"))
+    for m in modelos:
+        markup.add(InlineKeyboardButton(f"Nodo: {m}", callback_data=f"set_{m}"))
     await bot.send_message(message.chat.id, "🎯 **SELECCIONE MOTOR IA:**", reply_markup=markup, parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('set_'))
 async def cb_set_model(call):
     config_ia["modelo_actual"] = call.data.split('_')[1]
-    await bot.edit_message_text(f"✅ **NODO:** `{config_ia['modelo_actual']}`", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+    await bot.edit_message_text(f"✅ **NODO SELECCIONADO:** `{config_ia['modelo_actual']}`", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+
+@bot.message_handler(commands=['modelo'])
+async def cmd_modelo(message):
+    status = f"`{config_ia['modelo_actual']}`" if config_ia["modelo_actual"] else "Ninguno. Usa /test"
+    await bot.reply_to(message, f"🧠 **Nodo activo:** {status}", parse_mode='Markdown')
+
+@bot.message_handler(commands=['equipos'])
+async def cmd_equipos(message):
+    data = obtener_datos_poisson()
+    if data:
+        equipos = sorted(data['LaLiga']['teams'].keys())
+        await bot.reply_to(message, f"📋 **Equipos en el modelo:**\n`{', '.join(equipos)}`", parse_mode='Markdown')
+    else:
+        await bot.reply_to(message, "❌ No se pudo cargar la lista de equipos.")
 
 @bot.message_handler(commands=['pronostico', 'valor'])
 async def handle_analisis(message):
     if not config_ia["modelo_actual"]:
-        await bot.reply_to(message, "⚠️ Usa `/test` primero."); return
-    raw = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
-    if " vs " not in raw:
-        await bot.reply_to(message, "⚠️ Formato: `Local vs Visitante`."); return
-
-    l_q, v_q = [t.strip() for t in raw.split(" vs ")]
+        await bot.reply_to(message, "⚠️ Primero selecciona un nodo con `/test`."); return
     
-    # 1. Poisson
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or " vs " not in parts[1]:
+        await bot.reply_to(message, "⚠️ Usa: `/pronostico Local vs Visitante`."); return
+
+    l_q, v_q = [t.strip() for t in parts[1].split(" vs ")]
     full_data = obtener_datos_poisson()
     if not full_data: 
-        await bot.reply_to(message, "❌ Error: No hay datos de Poisson en GitHub."); return
+        await bot.reply_to(message, "❌ Error de conexión con GitHub."); return
     
     data_liga = full_data.get('LaLiga')
     m_l = next((t for t in data_liga['teams'] if t.lower() in l_q.lower() or l_q.lower() in t.lower()), None)
     m_v = next((t for t in data_liga['teams'] if t.lower() in v_q.lower() or v_q.lower() in t.lower()), None)
     
     if not m_l or not m_v:
-        await bot.reply_to(message, "❌ Equipo no encontrado en el modelo Poisson."); return
+        await bot.reply_to(message, "❌ Equipo no hallado. Mira `/equipos`."); return
 
-    # Cálculo Probabilidades
+    # Cálculos Poisson
     l_s, v_s = data_liga['teams'][m_l], data_liga['teams'][m_v]
     avg = data_liga['averages']
     lh = l_s['att_h'] * v_s['def_a'] * avg['league_home']
@@ -167,36 +192,29 @@ async def handle_analisis(message):
             elif x == y: pd += p
             else: pa += p
 
-    sent = await bot.reply_to(message, f"📈 Analizando con `{config_ia['modelo_actual']}`...")
+    sent = await bot.reply_to(message, f"📈 Analizando {m_l} vs {m_v}...")
     
-    # 2. Contexto y Cuotas
     contexto = obtener_contexto_gratuito(m_l, m_v)
     cuotas_data = obtener_cuotas_reales(m_l, m_v)
     texto_cuotas = f"L: {cuotas_data['precios'].get('L')} | E: {cuotas_data['precios'].get('E')} | V: {cuotas_data['precios'].get('V')}" if cuotas_data else "No disponibles"
-    
     header_checks = f"🛠 **REPORTE:** {'✅' if cuotas_data else '❌'} Cuotas | ✅ Poisson | ✅ Rachas\n"
 
     try:
         model = genai.GenerativeModel(config_ia["modelo_actual"])
         prompt = f"""
-Actúa como experto en Value Betting y Analista de Datos.
+Actúa como experto en Value Betting.
 PARTIDO: {m_l} vs {m_v}
-ESTADÍSTICA POISSON: WinL {ph*100:.1f}%, Empate {pd*100:.1f}%, WinV {pa*100:.1f}%
-RACHAS RECIENTES: {contexto}
-CUOTAS MERCADO: {texto_cuotas}
-
-Tu tarea:
-1. Analiza el VALOR: ¿La cuota es mayor que lo que dice Poisson?
-2. Detecta CONTRADICCIONES: ¿Poisson dice que gana uno pero las rachas dicen lo contrario?
-3. Da un veredicto final.
+POISSON: WinL {ph*100:.1f}%, Empate {pd*100:.1f}%, WinV {pa*100:.1f}%
+RACHAS: {contexto}
+CUOTAS: {texto_cuotas}
 
 FORMATO:
 {header_checks}
-🔥 **ANÁLISIS DE VALOR:** [Breve]
-⚠️ **PUNTOS CIEGOS/CONTRADICCIONES:** [Si Poisson y Rachas no coinciden, avisa aquí]
-🎯 **PICK:** [Mercado]
-💰 **CUOTA:** [Precio]
-⚠️ **CONFIANZA:** [Nivel]
+🔥 **ANÁLISIS DE VALOR:** [Comparación Cuota vs Probabilidad]
+⚠️ **PUNTOS CIEGOS:** [Contradicciones entre Poisson y Forma]
+🎯 **PICK:** [Mercado Sugerido]
+💰 **CUOTA:** [Precio actual]
+⚠️ **CONFIANZA:** [Baja/Media/Alta]
 
 PICK_RESUMEN: [4 palabras]
 """
@@ -204,20 +222,32 @@ PICK_RESUMEN: [4 palabras]
         respuesta_ia = response.text
         if "REPORTE" not in respuesta_ia: respuesta_ia = header_checks + respuesta_ia
         
-        try: await bot.edit_message_text(respuesta_ia, message.chat.id, sent.message_id, parse_mode='Markdown')
-        except: await bot.edit_message_text(respuesta_ia, message.chat.id, sent.message_id, parse_mode=None)
+        try:
+            await bot.edit_message_text(respuesta_ia, message.chat.id, sent.message_id, parse_mode='Markdown')
+        except:
+            await bot.edit_message_text(respuesta_ia, message.chat.id, sent.message_id, parse_mode=None)
 
     except Exception as e:
-        await bot.edit_message_text(f"❌ Error: {str(e)[:50]}", message.chat.id, sent.message_id)
+        await bot.edit_message_text(f"❌ Error en IA: {str(e)[:50]}", message.chat.id, sent.message_id)
 
-@bot.message_handler(commands=['equipos'])
-async def cmd_equipos(message):
-    data = obtener_datos_poisson()
-    if data:
-        equipos = sorted(data['LaLiga']['teams'].keys())
-        await bot.reply_to(message, f"📋 **Equipos en el modelo:**\n`{', '.join(equipos)}`", parse_mode='Markdown')
+@bot.message_handler(commands=['historial'])
+async def cmd_historial(message):
+    try:
+        url_hist = f"https://raw.githubusercontent.com/{REPO_PATH}/main/{HISTORIAL_FILE}"
+        r = requests.get(url_hist)
+        if r.status_code == 200:
+            logs = r.json()[-5:]
+            texto = "📜 **ÚLTIMOS PRONÓSTICOS:**\n\n"
+            for l in logs:
+                texto += f"• `{l['fecha']}`: **{l['partido']}** -> {l.get('pick_pronosticado', 'N/A')}\n"
+            await bot.reply_to(message, texto, parse_mode='Markdown')
+        else:
+            await bot.reply_to(message, "📂 El historial aún está vacío.")
+    except:
+        await bot.reply_to(message, "❌ Error al acceder al historial.")
 
 async def main():
+    logger.info("🚀 Bot iniciado y listo.")
     await bot.polling(non_stop=True)
 
 if __name__ == "__main__":
