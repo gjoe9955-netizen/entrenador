@@ -1,6 +1,6 @@
 pyTelegramBotAPI
 aiohttp
-google-generativeai
+google-genai
 requests
 pandas
 numpy
