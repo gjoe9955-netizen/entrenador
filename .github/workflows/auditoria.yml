@@ -2,8 +2,12 @@ name: Auditoria de Pronosticos
 
 on:
   schedule:
-    - cron: '0 0 * * *'
-  workflow_dispatch:
+    # Se ejecuta todos los días a las 04:00 UTC (cuando los partidos del día anterior han terminado)
+    - cron: '0 4 * * *'
+  workflow_dispatch: # Permite ejecución manual
+
+permissions:
+  contents: write
 
 jobs:
   verificar:
@@ -23,7 +27,6 @@ jobs:
 
       - name: Ejecutar Verificador
         env:
-          # Le pasamos el secreto al script como BOT_TOKEN_GH
-          BOT_TOKEN_GH: ${{ secrets.BOT_REPO_TOKEN }}
-          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
         run: python verificador.py
