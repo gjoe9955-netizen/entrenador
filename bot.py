@@ -92,12 +92,21 @@ def obtener_cuotas_reales(local, visitante):
     if not ODDS_API_KEY: 
         logger.warning("[ODDS] No hay ODDS_API_KEY configurada.")
         return None
+    
+    # Endpoint v4 correcto: /v4/sports/{sport}/odds/
     ligas = ["soccer_spain_la_liga", "soccer_spain_segunda_division"]
+    
     try:
         for liga in ligas:
-            logger.info(f"[ODDS] Consultando API para liga: {liga}")
-            url = f"https://api.the-odds-api.com/v1/sports/{liga}/odds/"
-            params = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h", "oddsFormat": "decimal"}
+            logger.info(f"[ODDS] Consultando API v4 para liga: {liga}")
+            url = f"https://api.the-odds-api.com/v4/sports/{liga}/odds/"
+            params = {
+                "apiKey": ODDS_API_KEY,
+                "regions": "eu",
+                "markets": "h2h",
+                "oddsFormat": "decimal",
+                "dateFormat": "iso"
+            }
             r = requests.get(url, params=params, timeout=10)
             
             if r.status_code != 200:
@@ -115,6 +124,10 @@ def obtener_cuotas_reales(local, visitante):
                 logger.info(f"[ODDS] Comparando: [{l_q} vs {v_q}] con API: [{h_api} vs {a_api}]")
                 
                 if (l_q in h_api or h_api in l_q) and (v_q in a_api or a_api in v_q):
+                    if not match.get('bookmakers'):
+                        logger.warning(f"[ODDS] Partido hallado pero sin bookmakers activos.")
+                        continue
+
                     logger.info(f"[ODDS] ✅ Match encontrado en {liga}")
                     bookie = match['bookmakers'][0]
                     cuotas = bookie['markets'][0]['outcomes']
@@ -128,7 +141,7 @@ def obtener_cuotas_reales(local, visitante):
         logger.warning(f"[ODDS] Fin de búsqueda. No se encontró {local} vs {visitante}")
         return None
     except Exception as e:
-        logger.error(f"[ODDS] Error crítico: {e}")
+        logger.error(f"[ODDS] Error crítico en cuotas: {e}")
         return None
 
 # --- COMANDOS ---
