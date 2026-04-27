@@ -4,6 +4,7 @@ import asyncio
 import logging
 import requests
 from scipy.stats import poisson
+from datetime import datetime, timedelta
 
 from google import genai
 from google.genai import types
@@ -21,13 +22,15 @@ TOKEN = os.getenv('TOKEN_TELEGRAM')
 GEMINI_KEY = os.getenv('GEMINI_KEY')
 NVIDIA_KEY = os.getenv('NVIDIA_KEY')
 FOOTBALL_DATA_KEY = os.getenv('FOOTBALL_DATA_KEY')
-ODDS_API_KEY = os.getenv('ODDS_API_KEY')
+
+# Ajuste para Ciudad Juárez (UTC - 6)
+OFFSET_JUAREZ = -6
 
 URL_JSON = "https://raw.githubusercontent.com/gjoe9955-netizen/entrenador2/main/modelo_poisson.json"
 
 bot = AsyncTeleBot(TOKEN)
 
-# --- Estado del Sistema (Nodos Originales) ---
+# --- Estado del Sistema ---
 SISTEMA_IA = {
     "estratega": {"api": None, "nodo": None},
     "auditor": {"api": None, "nodo": None},
@@ -44,7 +47,7 @@ async def ejecutar_ia(api, nodo, prompt):
                 client.models.generate_content, 
                 model=nodo, 
                 contents=prompt,
-                config=types.GenerateContentConfig(max_output_tokens=450, temperature=0.1)
+                config=types.GenerateContentConfig(max_output_tokens=500, temperature=0.1)
             )
             return res.text
         except Exception as e: return f"❌ Error Gemini: {str(e)[:50]}"
@@ -54,14 +57,14 @@ async def ejecutar_ia(api, nodo, prompt):
         payload = {
             "model": nodo,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1, "max_tokens": 450
+            "temperature": 0.1, "max_tokens": 500
         }
         try:
             r = await asyncio.to_thread(requests.post, url, headers=headers, json=payload, timeout=20)
             return r.json()['choices'][0]['message']['content'] if r.status_code == 200 else f"❌ Error NVIDIA"
         except: return "❌ Error Técnico NVIDIA"
 
-# --- Lógica de Datos (Corregida para evitar errores de tipo None) ---
+# --- Lógica de Datos & H2H ---
 def obtener_datos_poisson():
     try:
         response = requests.get(URL_JSON, timeout=10)
@@ -72,79 +75,64 @@ async def api_football_call(endpoint):
     if not FOOTBALL_DATA_KEY: return None
     headers = {'X-Auth-Token': FOOTBALL_DATA_KEY}
     try:
-        # Nota: Usamos loop.run_in_executor para peticiones blocking en handlers async
         r = await asyncio.to_thread(requests.get, f"https://api.football-data.org/v4/competitions/PD/{endpoint}", headers=headers, timeout=10)
         return r.json() if r.status_code == 200 else None
     except: return None
 
+async def obtener_h2h_historico(id_l, id_v):
+    if not FOOTBALL_DATA_KEY or not id_l or not id_v: return "Sin historial disponible."
+    headers = {'X-Auth-Token': FOOTBALL_DATA_KEY}
+    try:
+        url = f"https://api.football-data.org/v4/teams/{id_l}/matches?competitors={id_v}&status=FINISHED"
+        r = await asyncio.to_thread(requests.get, url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            matches = r.json().get('matches', [])
+            if not matches: return "No hay enfrentamientos previos registrados recientemente."
+            l_win, v_win, emp = 0, 0, 0
+            for m in matches[:5]:
+                win = m['score']['winner']
+                if win == 'HOME_TEAM': l_win += 1
+                elif win == 'AWAY_TEAM': v_win += 1
+                else: emp += 1
+            return f"Últimos {len(matches[:5])} cara a cara: Local ganó {l_win}, Visitante ganó {v_win}, Empates {emp}."
+        return "Historial no recuperable."
+    except: return "Error consultando H2H."
+
 # --- Comandos de Información ---
-
-@bot.message_handler(commands=['tabla'])
-async def cmd_tabla(message):
-    data = await api_football_call("standings")
-    if not data or 'standings' not in data:
-        await bot.reply_to(message, "❌ Error al obtener clasificación."); return
-    table = data['standings'][0]['table']
-    txt = "🏆 **TOP 10 - LA LIGA:**\n\n"
-    for t in table[:10]:
-        txt += f"`{t['position']:02d}.` **{t['team']['shortName']}** - {t['points']} pts\n"
-    await bot.reply_to(message, txt, parse_mode='Markdown')
-
-@bot.message_handler(commands=['goleadores'])
-async def cmd_goleadores(message):
-    data = await api_football_call("scorers")
-    if not data or 'scorers' not in data:
-        await bot.reply_to(message, "❌ Error al obtener goleadores."); return
-    txt = "⚽ **PICHICHI ACTUAL:**\n\n"
-    for s in data['scorers'][:8]:
-        txt += f"• {s['player']['name']} ({s['team']['shortName']}): **{s['goals']}**\n"
-    await bot.reply_to(message, txt, parse_mode='Markdown')
 
 @bot.message_handler(commands=['partidos'])
 async def cmd_partidos(message):
     data = await api_football_call("matches?status=SCHEDULED")
     if not data or 'matches' not in data:
-        await bot.reply_to(message, "❌ No hay partidos programados próximamente."); return
-    txt = "📅 **PRÓXIMOS ENCUENTROS:**\n\n"
-    for m in data['matches'][:6]:
-        txt += f"• {m['homeTeam']['shortName']} vs {m['awayTeam']['shortName']}\n"
+        await bot.reply_to(message, "❌ No hay partidos programados."); return
+    
+    txt = "📅 **PRÓXIMOS PARTIDOS (HORA CD. JUÁREZ)**\n\n"
+    for m in data['matches'][:10]:
+        # Formatear Fecha y Hora con ajuste UTC-6
+        fecha_raw = m['utcDate'] 
+        dt_utc = datetime.strptime(fecha_raw, "%Y-%m-%dT%H:%M:%SZ")
+        dt_local = dt_utc + timedelta(hours=OFFSET_JUAREZ)
+        
+        fecha_bonita = dt_local.strftime("%d/%m")
+        hora_bonita = dt_local.strftime("%H:%M")
+        
+        txt += f"🕒 `{hora_bonita}` | `{fecha_bonita}`\n"
+        txt += f"🏠 **{m['homeTeam']['shortName']}** vs 🚩 **{m['awayTeam']['shortName']}**\n"
+        txt += f"{'—'*15}\n"
+    
     await bot.reply_to(message, txt, parse_mode='Markdown')
 
-@bot.message_handler(commands=['equipos'])
-async def cmd_equipos(message):
-    data = obtener_datos_poisson()
-    if data:
-        liga = next(iter(data))
-        equipos = ", ".join([f"`{e}`" for e in data[liga]['teams'].keys()])
-        await bot.reply_to(message, f"📋 **EQUIPOS REGISTRADOS:**\n\n{equipos}", parse_mode='Markdown')
+@bot.message_handler(commands=['tabla'])
+async def cmd_tabla(message):
+    data = await api_football_call("standings")
+    if not data: await bot.reply_to(message, "❌ Error de conexión."); return
+    table = data['standings'][0]['table']
+    txt = "🏆 **CLASIFICACIÓN:**\n\n"
+    for t in table[:10]:
+        txt += f"`{t['position']:02d}.` **{t['team']['shortName']}** - {t['points']} pts\n"
+    await bot.reply_to(message, txt, parse_mode='Markdown')
 
-# --- Pronóstico y Configuración ---
-
-@bot.message_handler(commands=['config', 'test'])
-async def cmd_config(message):
-    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🧠 ASIGNAR ESTRATEGA", callback_data="set_estratega"))
-    await bot.reply_to(message, "🛠 **CONFIGURACIÓN IA**", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith(('set_', 'api_', 'save_')))
-async def cb_config(call):
-    if call.data.startswith('set_'):
-        rol = call.data.split('_')[1]
-        markup = InlineKeyboardMarkup().row(InlineKeyboardButton("Gemini", callback_data=f"api_{rol}_GEMINI"), InlineKeyboardButton("NVIDIA", callback_data=f"api_{rol}_NVIDIA"))
-        await bot.edit_message_text(f"API para **{rol.upper()}**:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-    elif call.data.startswith('api_'):
-        _, rol, api = call.data.split('_')
-        markup = InlineKeyboardMarkup()
-        nodos = SISTEMA_IA["nodos_gemini"] if api == 'GEMINI' else SISTEMA_IA["nodos_nvidia"]
-        for n in nodos: markup.add(InlineKeyboardButton(n.split('/')[-1], callback_data=f"save_{rol}_{api}_{n}"))
-        await bot.edit_message_text(f"Nodo para {rol}:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-    elif call.data.startswith('save_'):
-        _, rol, api, nodo = call.data.split('_')
-        SISTEMA_IA[rol] = {"api": api, "nodo": nodo}
-        if rol == "estratega":
-            markup = InlineKeyboardMarkup().add(InlineKeyboardButton("⚖️ AÑADIR AUDITOR", callback_data="set_auditor"))
-            await bot.edit_message_text(f"✅ Estratega: `{nodo.split('/')[-1]}`", call.message.chat.id, call.message.message_id, reply_markup=markup)
-        else:
-            await bot.edit_message_text(f"🚀 **ANÁLISIS DUAL ACTIVO**", call.message.chat.id, call.message.message_id)
+# --- Pronóstico con Integración H2H ---
 
 @bot.message_handler(commands=['pronostico', 'valor'])
 async def handle_analisis(message):
@@ -157,11 +145,17 @@ async def handle_analisis(message):
 
     l_q, v_q = [t.strip() for t in parts[1].split(" vs ")]
     full_data = obtener_datos_poisson()
-    
-    # Cuotas Base
-    c_l, c_e, c_v = 1.85, 3.75, 4.00 
-
     if not full_data: return
+
+    standings = await api_football_call("standings")
+    id_l, id_v = None, None
+    if standings:
+        for t in standings['standings'][0]['table']:
+            if t['team']['shortName'].lower() in l_q.lower(): id_l = t['team']['id']
+            if t['team']['shortName'].lower() in v_q.lower(): id_v = t['team']['id']
+
+    h2h_txt = await obtener_h2h_historico(id_l, id_v)
+    
     liga_key = next(iter(full_data))
     m_l = next((t for t in full_data[liga_key]['teams'] if t.lower() in l_q.lower()), None)
     m_v = next((t for t in full_data[liga_key]['teams'] if t.lower() in v_q.lower()), None)
@@ -180,42 +174,59 @@ async def handle_analisis(message):
             elif x == y: pd += p
             else: pa += p
 
-    edge = (ph * 100) - (100 / c_l)
-    msg_espera = await bot.reply_to(message, "🧬 Generando reporte profesional...")
-    header = (f"🛠 **REPORTE:** ✅ Cuotas ({c_l}/{c_e}/{c_v}) | ✅ Poisson ({ph*100:.1f}%) | ✅ Football-Data\n{'—'*20}\n")
+    edge = (ph * 100) - (100 / 1.85)
+    msg_espera = await bot.reply_to(message, "🧬 Analizando Poisson + H2H...")
 
-    prompt_e = (f"Analista Senior. Partido: {m_l} vs {m_v}. Poisson: {ph*100:.1f}% | Cuota: {c_l}. "
-                f"Formato: 💎 **NIVEL:** [DIAMANTE/ORO/PLATA] | STAKE: [X/5]. "
-                f"🔥 **ANÁLISIS DE VALOR:** [Ineficiencia mercado 3 líneas]. "
-                f"🎯 **PICK:** [Victoria X] | 💰 **CUOTA:** {c_l} | 📊 **EDGE:** {edge:.1f}%")
+    prompt_e = (f"Analista Senior. Partido: {m_l} vs {m_v}.\n"
+                f"POISSON: L {ph*100:.1f}%, E {pd*100:.1f}%, V {pa*100:.1f}%\n"
+                f"HISTORIAL H2H: {h2h_txt}\n\n"
+                f"FORMATO: 💎 **NIVEL:** [Nivel] | STAKE: [X/5]\n"
+                f"🔥 **VALOR:** [Cruza Poisson con el H2H en 3 líneas]\n"
+                f"🎯 **PICK:** [Resultado] | 📊 **EDGE:** {edge:.1f}%")
     
     res_e = await ejecutar_ia(SISTEMA_IA["estratega"]["api"], SISTEMA_IA["estratega"]["nodo"], prompt_e)
 
     if SISTEMA_IA["auditor"]["nodo"]:
-        prompt_a = (f"Auditor de Riesgos. Valida: '{res_e}'. "
-                    f"FORMATO: ⚠️ **PUNTOS CIEGOS:** [Riesgos en 3 líneas]. ✅ **VEREDICTO:** [Confirmado/Ajustado]")
+        prompt_a = (f"Auditor. Revisa el análisis: '{res_e}'.\n"
+                    f"Considerando el H2H '{h2h_txt}', ¿es el nivel asignado congruente?\n"
+                    f"FORMATO: ⚠️ **RIESGOS:** [Breve] | ✅ **VEREDICTO:** [Confirmado/Ajustado]")
         res_a = await ejecutar_ia(SISTEMA_IA["auditor"]["api"], SISTEMA_IA["auditor"]["nodo"], prompt_a)
-        final = f"{header}{res_e}\n\n{res_a}"
+        final = f"🛠 **REPORTE ESTRATÉGICO**\n{'—'*20}\n{res_e}\n\n{res_a}"
     else:
-        final = f"{header}{res_e}"
+        final = f"🛠 **REPORTE ESTRATÉGICO**\n{'—'*20}\n{res_e}"
 
     await bot.edit_message_text(final, message.chat.id, msg_espera.message_id, parse_mode='Markdown')
 
+# --- Otros Comandos ---
+@bot.message_handler(commands=['config', 'test'])
+async def cmd_config(message):
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🧠 ASIGNAR ESTRATEGA", callback_data="set_estratega"))
+    await bot.reply_to(message, "🛠 **CONFIGURACIÓN**", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith(('set_', 'api_', 'save_')))
+async def cb_config(call):
+    if call.data.startswith('set_'):
+        rol = call.data.split('_')[1]
+        markup = InlineKeyboardMarkup().row(InlineKeyboardButton("Gemini", callback_data=f"api_{rol}_GEMINI"), InlineKeyboardButton("NVIDIA", callback_data=f"api_{rol}_NVIDIA"))
+        await bot.edit_message_text(f"API para {rol}:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+    elif call.data.startswith('api_'):
+        _, rol, api = call.data.split('_')
+        markup = InlineKeyboardMarkup()
+        nodos = SISTEMA_IA["nodos_gemini"] if api == 'GEMINI' else SISTEMA_IA["nodos_nvidia"]
+        for n in nodos: markup.add(InlineKeyboardButton(n.split('/')[-1], callback_data=f"save_{rol}_{api}_{n}"))
+        await bot.edit_message_text(f"Nodo {rol}:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+    elif call.data.startswith('save_'):
+        _, rol, api, nodo = call.data.split('_')
+        SISTEMA_IA[rol] = {"api": api, "nodo": nodo}
+        if rol == "estratega":
+            markup = InlineKeyboardMarkup().add(InlineKeyboardButton("⚖️ AÑADIR AUDITOR", callback_data="set_auditor"))
+            await bot.edit_message_text(f"✅ Estratega: `{nodo.split('/')[-1]}`", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        else:
+            await bot.edit_message_text(f"🚀 **SISTEMA DUAL LISTO**", call.message.chat.id, call.message.message_id)
+
 @bot.message_handler(commands=['help', 'start'])
 async def cmd_help(message):
-    help_text = (
-        "🤖 **ESTRATEGA POISSON V2.6**\n\n"
-        "📈 **ANÁLISIS:**\n"
-        "• `/pronostico A vs B` - Reporte Diamante.\n"
-        "• `/config` - Configurar IAs (Estratega/Auditor).\n\n"
-        "⚽ **DATOS EN TIEMPO REAL:**\n"
-        "• `/tabla` - Clasificación actualizada.\n"
-        "• `/goleadores` - Tabla de goleadores.\n"
-        "• `/partidos` - Próximos encuentros.\n"
-        "• `/equipos` - Nombres para el modelo Poisson.\n\n"
-        "💡 *El sistema utiliza IA dual para confirmar ineficiencias de cuotas.*"
-    )
-    await bot.reply_to(message, help_text, parse_mode='Markdown')
+    await bot.reply_to(message, "🤖 **SISTEMA V2.7 (JUÁREZ TIME)**\n\n• `/pronostico Local vs Visitante`\n• `/partidos` - Calendario Local.\n• `/tabla` - Clasificación.\n• `/config` - IAs.", parse_mode='Markdown')
 
 async def main():
     await bot.polling(non_stop=True)
