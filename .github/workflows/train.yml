@@ -2,8 +2,8 @@ name: Entrenador Poisson España
 
 on:
   schedule:
-    - cron: '0 */12 * * *' 
-  workflow_dispatch:
+    - cron: '0 */12 * * *' # Se ejecuta cada 12 horas
+  workflow_dispatch:      # Permite ejecución manual desde la pestaña Actions
 
 permissions:
   contents: write
@@ -12,29 +12,27 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout del repositorio
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Configurar Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install
-        run: pip install requests pandas
+      - name: Instalar dependencias necesarias
+        run: |
+          pip install requests pandas numpy scipy
 
-      - name: Run Trainer
+      - name: Ejecutar el script Trainer
         env:
           FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
         run: python trainer.py
 
-      - name: Push Changes
-        env:
-          # Usamos el token personalizado para asegurar el permiso de push
-          GITHUB_TOKEN: ${{ secrets.BOT_REPO_TOKEN }} 
+      - name: Subir cambios al repositorio
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add modelo_poisson.json
-          git commit -m "Update Spain Poisson Data" || exit 0
-          git push origin HEAD:main
+          # Solo hace commit si hay cambios reales en los datos
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Actualización: Datos Poisson con Time-Decay" && git push origin HEAD:main)
