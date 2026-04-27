@@ -8,7 +8,7 @@ load_dotenv()
 
 # Configuración
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
-API_KEY_FOOTBALL = os.getenv('FOOTBALL_DATA_KEY') # Asegurado el nombre correcto de la clave
+API_KEY_FOOTBALL = os.getenv('FOOTBALL_DATA_KEY')
 REPO_PATH = "gjoe9955-netizen/entrenador2"
 HISTORIAL_FILE = "historial_picks.json"
 
@@ -27,6 +27,7 @@ def obtener_resultados_recientes():
 
 def normalizar_nombre(nombre):
     """Limpia nombres para facilitar la coincidencia"""
+    if not nombre: return ""
     return nombre.lower().replace("rcd", "").replace("cf", "").replace("real", "").strip()
 
 def actualizar_historial():
@@ -82,7 +83,10 @@ def actualizar_historial():
                         break
 
         if cambio:
-            new_content = base64.b64encode(json.dumps(historial, indent=4).ensure_ascii=False.encode('utf-8')).decode('utf-8')
+            # CORRECCIÓN DE SINTAXIS AQUÍ: ensure_ascii va dentro de dumps()
+            json_str = json.dumps(historial, indent=4, ensure_ascii=False)
+            new_content = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
+            
             payload = {
                 "message": "Auditoría automática de resultados",
                 "content": new_content,
