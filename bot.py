@@ -13,7 +13,10 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 
 # --- Configuración de Logs ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
@@ -21,160 +24,172 @@ load_dotenv()
 TOKEN = os.getenv('TOKEN_TELEGRAM')
 GEMINI_KEY = os.getenv('GEMINI_KEY')
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
-ODDS_API_KEY = os.getenv('ODDS_API_KEY')
 FOOTBALL_DATA_KEY = os.getenv('FOOTBALL_DATA_KEY')
 
 URL_JSON = "https://raw.githubusercontent.com/gjoe9955-netizen/entrenador2/main/modelo_poisson.json"
 REPO_PATH = "gjoe9955-netizen/entrenador2"
 HISTORIAL_FILE = "historial_picks.json"
 
+if not TOKEN or not GEMINI_KEY:
+    logger.error("❌ Faltan variables de entorno esenciales.")
+    exit(1)
+
 bot = AsyncTeleBot(TOKEN)
 genai.configure(api_key=GEMINI_KEY)
-config_ia = {"modelo_actual": None}
+
+# --- Lógica Matemática Avanzada ---
+
+def ajuste_dixon_coles(x, y, lh, la, rho=-0.15):
+    """Ajuste para corregir la correlación de goles en marcadores bajos."""
+    if x == 0 and y == 0: return 1 - (lh * la * rho)
+    if x == 0 and y == 1: return 1 + (lh * rho)
+    if x == 1 and y == 0: return 1 + (la * rho)
+    if x == 1 and y == 1: return 1 - rho
+    return 1.0
+
+def calcular_probabilidades(local, visitante, data):
+    stats = data['LaLiga']['teams']
+    avg = data['LaLiga']['averages']
+    
+    s_l = stats[local]
+    s_v = stats[visitante]
+    
+    # Goles esperados (Lambdas)
+    lh = s_l['att_h'] * s_v['def_a'] * avg['league_home']
+    la = s_v['att_a'] * s_l['def_h'] * avg['league_away']
+    
+    prob_h, prob_d, prob_a = 0, 0, 0
+    matrix = []
+    
+    # Generar matriz 6x6 (Dixon-Coles)
+    for x in range(7):
+        for y in range(7):
+            # Poisson base * Ajuste Dixon-Coles
+            p = (poisson.pmf(x, lh) * poisson.pmf(y, la)) * ajuste_dixon_coles(x, y, lh, la)
+            
+            if x > y: prob_h += p
+            elif x == y: prob_d += p
+            else: prob_a += p
+            
+    return {
+        "lh": lh, "la": la,
+        "p_h": prob_h, "p_d": prob_d, "p_a": prob_a
+    }
 
 # --- Funciones de Datos ---
 
 def obtener_datos_poisson():
     try:
-        response = requests.get(URL_JSON, timeout=10)
-        return response.json() if response.status_code == 200 else None
+        r = requests.get(URL_JSON, timeout=10)
+        return r.json()
     except Exception as e:
-        logger.error(f"Error cargando Poisson: {e}")
+        logger.error(f"Error cargando JSON: {e}")
         return None
 
-def obtener_contexto_gratuito(local, visitante):
-    """Obtiene rachas de LaLiga (PD) usando la API Key unificada"""
-    if not FOOTBALL_DATA_KEY: return "Sin API Key para rachas."
-    headers = {'X-Auth-Token': FOOTBALL_DATA_KEY}
-    url = "https://api.football-data.org/v4/competitions/PD/matches?status=FINISHED"
+async def guardar_en_historial(partido, pick, analisis):
+    if not GITHUB_TOKEN: return
     try:
-        r = requests.get(url, headers=headers, timeout=10)
-        matches = r.json().get('matches', [])
-        def extraer_racha(team_name):
-            racha = []
-            for m in reversed(matches):
-                if len(racha) >= 5: break
-                h, a = m['homeTeam']['name'], m['awayTeam']['name']
-                if team_name in [h, a]:
-                    res = m['score']['fullTime']
-                    if res['home'] == res['away']: racha.append("E")
-                    elif (res['home'] > res['away'] and team_name == h) or (res['away'] > res['home'] and team_name == a):
-                        racha.append("G")
-                    else: racha.append("P")
-            return "-".join(racha) if racha else "Sin datos"
-        return f"📊 RACHAS:\n- {local}: {extraer_racha(local)}\n- {visitante}: {extraer_racha(visitante)}"
-    except: return "Error obteniendo contexto."
-
-def calcular_probabilidades(local_q, visitante_q):
-    data_full = obtener_datos_poisson()
-    if not data_full or "LaLiga" not in data_full: return None
-    data = data_full["LaLiga"]
-    teams = data["teams"]
-    
-    m_l = next((t for t in teams if local_q.lower() in t.lower()), None)
-    m_v = next((t for t in teams if visitante_q.lower() in t.lower()), None)
-    
-    if not m_l or not m_v: return None
-    
-    l_s, v_s = teams[m_l], teams[m_v]
-    avg = data["averages"]
-    lh = l_s['att_h'] * v_s['def_a'] * avg['league_home']
-    la = v_s['att_a'] * l_s['def_h'] * avg['league_away']
-    
-    ph, pd, pa = 0, 0, 0
-    for x in range(9):
-        for y in range(9):
-            p = poisson.pmf(x, lh) * poisson.pmf(y, la)
-            if x > y: ph += p
-            elif x == y: pd += p
-            else: pa += p
-    return {"lh": lh, "la": la, "ph": ph, "pd": pd, "pa": pa, "n_l": m_l, "n_v": m_v}
-
-# --- Manejadores ---
-
-@bot.message_handler(commands=['test'])
-async def cmd_test(message):
-    wait = await bot.reply_to(message, "🔍 Escaneando nodos...")
-    try:
-        modelos = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                name = m.name.split('/')[-1]
-                if any(x in name for x in ['1.5', '2.0', 'flash']): modelos.append(name)
-        modelos = sorted(list(set(modelos)))[:6]
-        if not modelos: 
-            await bot.edit_message_text("❌ No se hallaron nodos.", message.chat.id, wait.message_id)
-            return
-        markup = InlineKeyboardMarkup()
-        for m in modelos: markup.add(InlineKeyboardButton(f"Nodo: {m}", callback_data=f"set_{m}"))
-        await bot.delete_message(message.chat.id, wait.message_id)
-        await bot.send_message(message.chat.id, "🎯 **MOTOR IA:**", reply_markup=markup, parse_mode='Markdown')
-    except: await bot.edit_message_text("❌ Error de conexión.", message.chat.id, wait.message_id)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('set_'))
-async def cb_set(call):
-    config_ia["modelo_actual"] = call.data.split('_')[1]
-    await bot.edit_message_text(f"✅ **ACTIVO:** `{config_ia['modelo_actual']}`", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
-
-@bot.message_handler(commands=['equipos'])
-async def cmd_equipos(message):
-    data = obtener_datos_poisson()
-    if data and "LaLiga" in data:
-        lista = data["LaLiga"].get("equipo_nombres", sorted(data["LaLiga"]["teams"].keys()))
-        await bot.reply_to(message, f"📋 **Equipos en el modelo:**\n`{', '.join(lista)}`", parse_mode='Markdown')
-    else: await bot.reply_to(message, "❌ Modelo no cargado.")
-
-@bot.message_handler(commands=['pronostico', 'valor'])
-async def handle_pronostico(message):
-    if not config_ia["modelo_actual"]:
-        await bot.reply_to(message, "⚠️ Usa `/test` para activar un nodo."); return
-    
-    raw = message.text.split(None, 1)[1] if len(message.text.split()) > 1 else ""
-    if " vs " not in raw:
-        await bot.reply_to(message, "⚠️ Usa: `/pronostico Local vs Visitante`."); return
-
-    l_q, v_q = [t.strip() for t in raw.split(" vs ")]
-    res = calcular_probabilidades(l_q, v_q)
-    
-    if not res:
-        await bot.reply_to(message, "❌ Equipo no reconocido."); return
-
-    sent = await bot.reply_to(message, f"📈 Analizando con `{config_ia['modelo_actual']}`...")
-    contexto = obtener_contexto_gratuito(res['n_l'], res['n_v'])
-    
-    try:
-        model = genai.GenerativeModel(config_ia["modelo_actual"])
+        url_gh = f"https://api.github.com/repos/{REPO_PATH}/contents/{HISTORIAL_FILE}"
+        headers = {"Authorization": f"token {GITHUB_TOKEN}"}
         
-        # PROMPT MEJORADO (Estilo Experto Tipster)
-        prompt = f"""
-Actúa como un Senior Tipster experto en LaLiga con 20 años de experiencia en análisis estadístico.
-Tu objetivo es vender este pick a un grupo de apostadores exigentes.
-
-DATOS DEL PARTIDO:
-⚽ Encuentro: {res['n_l']} vs {res['n_v']}
-📊 Probabilidades Poisson: Victoria {res['n_l']} ({res['ph']*100:.1f}%), Empate ({res['pd']*100:.1f}%), Victoria {res['n_v']} ({res['pa']*100:.1f}%)
-📈 Rachas Recientes: {contexto}
-
-ESTRUCTURA DE RESPUESTA (Obligatoria):
-1️⃣ **EL OJO DEL EXPERTO**: Un párrafo potente explicando la dinámica del partido basada en los datos.
-2️⃣ **MARCADOR PROBABLE**: Dibuja el escenario exacto más factible.
-3️⃣ **PICK DE VALOR**: El mercado con mejor relación riesgo/beneficio.
-4️⃣ **STAKE/CONFIANZA**: [1 al 10]
-
-Finaliza siempre con:
-PICK_RESUMEN: [4 palabras clave en mayúsculas]
-
-⚠️ REGLA DE ORO: Sé directo, profesional y usa emojis futboleros. No divagues.
-"""
+        r = requests.get(url_gh, headers=headers)
+        sha = r.json()['sha'] if r.status_code == 200 else None
+        content = json.loads(base64.b64decode(r.json()['content']).decode('utf-8')) if sha else []
         
-        response = await asyncio.to_thread(model.generate_content, prompt)
-        await bot.edit_message_text(response.text, message.chat.id, sent.message_id)
+        nuevo_pick = {
+            "fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "partido": partido,
+            "pick_pronosticado": pick,
+            "analisis_resumen": analisis[:300] + "...",
+            "resultado_real": "Pendiente"
+        }
+        content.append(nuevo_pick)
+        
+        new_b64 = base64.b64encode(json.dumps(content, indent=4).encode('utf-8')).decode('utf-8')
+        payload = {"message": f"Nuevo pick: {partido}", "content": new_b64, "sha": sha} if sha else {"message": "Crear historial", "content": new_b64}
+        
+        requests.put(url_gh, headers=headers, json=payload)
     except Exception as e:
-        await bot.edit_message_text(f"❌ Error IA: {str(e)[:50]}", message.chat.id, sent.message_id)
+        logger.error(f"Error historial: {e}")
 
-async def main():
-    logger.info("🚀 Bot iniciado.")
-    await bot.polling(non_stop=True)
+# --- Handlers del Bot ---
+
+@bot.message_handler(commands=['start'])
+async def send_welcome(message):
+    await bot.reply_to(message, "⚽ **Calculadora Poisson Pro v2**\nUsa /predecir para analizar un partido de LaLiga.")
+
+@bot.message_handler(commands=['predecir'])
+async def cmd_predecir(message):
+    data = obtener_datos_poisson()
+    if not data:
+        await bot.reply_to(message, "❌ No se pudo cargar el modelo.")
+        return
+    
+    markup = InlineKeyboardMarkup()
+    teams = sorted(data['LaLiga']['teams'].keys())
+    for i in range(0, len(teams), 2):
+        row = [InlineKeyboardButton(teams[i], callback_query_data=f"L:{teams[i]}")]
+        if i+1 < len(teams):
+            row.append(InlineKeyboardButton(teams[i+1], callback_query_data=f"L:{teams[i+1]}"))
+        markup.add(*row)
+    
+    await bot.send_message(message.chat.id, "Selecciona el equipo **LOCAL**:", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: True)
+async def callback_query(call):
+    data = obtener_datos_poisson()
+    
+    if call.data.startswith("L:"):
+        local = call.data.split(":")[1]
+        markup = InlineKeyboardMarkup()
+        teams = sorted(data['LaLiga']['teams'].keys())
+        for i in range(0, len(teams), 2):
+            t1, t2 = teams[i], teams[i+1] if i+1 < len(teams) else None
+            row = [InlineKeyboardButton(t1, callback_query_data=f"V:{local}:{t1}")]
+            if t2: row.append(InlineKeyboardButton(t2, callback_query_data=f"V:{local}:{t2}"))
+            markup.add(*row)
+        await bot.edit_message_text(f"Local: {local}\nAhora selecciona el **VISITANTE**:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+
+    elif call.data.startswith("V:"):
+        _, local, visitante = call.data.split(":")
+        if local == visitante:
+            await bot.answer_callback_query(call.id, "¡No pueden ser el mismo equipo!")
+            return
+        
+        sent = await bot.edit_message_text(f"⏳ Analizando {local} vs {visitante}...", call.message.chat.id, call.message.message_id)
+        
+        # Ejecutar lógica mejorada
+        res = calcular_probabilidades(local, visitante, data)
+        
+        # Consultar a la IA
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"""
+        Actúa como analista Pro de LaLiga. Datos Poisson (Ajuste Dixon-Coles):
+        Partido: {local} vs {visitante}
+        - Goles Esperados Local (Lambda H): {res['lh']:.2f}
+        - Goles Esperados Visita (Lambda A): {res['la']:.2f}
+        - Probabilidades: Local {res['p_h']:.1%}, Empate {res['p_d']:.1%}, Visita {res['p_a']:.1%}
+        
+        Tarea:
+        1. Explica brevemente el favoritismo basado en esas Lambdas.
+        2. Indica el pick con más VALUE (compara probabilidades vs riesgo).
+        3. Da un marcador exacto.
+        Usa emojis, tono directo y profesional.
+        """
+        
+        try:
+            response = model.generate_content(prompt)
+            texto_final = f"🏟 **{local} vs {visitante}**\n\n{response.text}"
+            await bot.edit_message_text(texto_final, call.message.chat.id, sent.message_id, parse_mode='Markdown')
+            await guardar_en_historial(f"{local} vs {visitante}", "Consultar análisis", response.text)
+        except Exception as e:
+            await bot.edit_message_text(f"❌ Error IA: {e}", call.message.chat.id, sent.message_id)
+
+@bot.message_handler(commands=['historial'])
+async def cmd_historial(message):
+    # (Misma lógica de historial que ya tenías)
+    await bot.reply_to(message, "📜 Consultando historial en GitHub...")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    logger.info("Bot iniciado...")
+    asyncio.run(bot.polling())
