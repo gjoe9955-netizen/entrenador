@@ -70,6 +70,15 @@ SISTEMA_IA = {
     ]
 }
 
+# --- Lógica Estadística Avanzada ---
+def ajuste_dixon_coles(x, y, lh, la, rho=-0.15):
+    """Ajuste de correlación para marcadores bajos (Lógica Dixon-Coles)."""
+    if x == 0 and y == 0: return 1 - (lh * la * rho)
+    if x == 0 and y == 1: return 1 + (lh * rho)
+    if x == 1 and y == 0: return 1 + (la * rho)
+    if x == 1 and y == 1: return 1 - rho
+    return 1.0
+
 # --- Motores de IA ---
 async def ejecutar_ia(rol, prompt):
     config = SISTEMA_IA[rol]
@@ -89,22 +98,22 @@ async def ejecutar_ia(rol, prompt):
 
     instrucciones = {
         "estratega": (
-            "Eres un experto en Value Betting y modelos estadísticos. "
-            "Analiza: 1) Probabilidad Poisson vs Cuota Real. 2) Tendencia H2H del CSV. "
+            "Eres un experto en Value Betting y modelos estadísticos Dixon-Coles. "
+            "Analiza: 1) Probabilidades calculadas vs Cuotas reales. 2) Tendencia H2H. "
             "Tu objetivo es identificar si existe una ventaja matemática real (Edge).\n\n"
-            "REGLAS:\n"
-            "- Si el Edge es > 2%, busca confirmación en el H2H para el PICK.\n"
+            "INSTRUCCIONES TÉCNICAS:\n"
+            "- Define si el partido tiende a ser Over o Under basado en Lambdas.\n"
+            "- Sugiere un marcador exacto basado en la mayor probabilidad Poisson.\n"
             "- Si el Edge es negativo, el PICK debe ser NO APOSTAR.\n\n"
-            "FORMATO OBLIGATORIO (Máx 100 palabras):\n"
+            "FORMATO OBLIGATORIO (Máx 120 palabras):\n"
             "• ANÁLISIS: Justificación técnica breve.\n"
-            "• MERCADO RELEVANTE: Cuota analizada y su valor.\n"
-            "• PREDICCIÓN: Pronóstico directo (1X2) o NO APOSTAR."
+            "• MARCADOR EXACTO: Tu sugerencia.\n"
+            "• PREDICCIÓN: Pronóstico directo o NO APOSTAR."
         ),
         "auditor": (
             "Eres un Auditor de Riesgos Matemáticos. PROHIBIDO SALUDAR.\n\n"
             "Valida: Si el Edge es > 0 y el H2H es favorable, aprueba el Stake. "
-            "Si el Edge es negativo y el estratega sugiere apostar, reporta 'INCONGRUENCIA MATEMÁTICA'. "
-            "Confirma que el Stake 0% es la única acción lógica ante falta de valor.\n\n"
+            "Si el Edge es negativo y el estratega sugiere apostar, reporta 'INCONGRUENCIA'.\n\n"
             "Máximo 50 palabras."
         )
     }
@@ -173,10 +182,6 @@ async def obtener_datos_mercado(equipo_l):
     return 1.85, 3.50, 4.00, False
 
 async def api_football_call(params):
-    """
-    Corregido: Usa el endpoint directo /competitions/PD/matches (LaLiga)
-    y concatena los parámetros adicionales.
-    """
     headers = {'X-Auth-Token': FOOTBALL_DATA_KEY}
     url = f"https://api.football-data.org/v4/competitions/PD/matches?{params}"
     try:
@@ -225,7 +230,7 @@ async def handle_pronostico(message):
     if len(parts) < 2 or " vs " not in parts[1]:
         await bot.reply_to(message, "⚠️ `/pronostico Local vs Visitante`."); return
     l_q, v_q = [t.strip() for t in parts[1].split(" vs ")]
-    msg_espera = await bot.reply_to(message, "📡 Analizando probabilidades...")
+    msg_espera = await bot.reply_to(message, "📡 Ejecutando Poisson + Dixon-Coles...")
     try:
         try:
             raw_json = requests.get(URL_JSON, timeout=10).json()
@@ -238,19 +243,25 @@ async def handle_pronostico(message):
         m_v = next((t for t in raw_json[liga]['teams'] if t.lower() in v_q.lower() or v_q.lower() in t.lower()), None)
         if not m_l or not m_v:
             await bot.edit_message_text("❌ Equipos no coinciden.", message.chat.id, msg_espera.message_id); return
+        
         c_l, c_e, c_v, check_odds = await obtener_datos_mercado(m_l)
         h2h_str, check_h2h = await obtener_h2h_directo(m_l, m_v)
         l_stats, v_stats = raw_json[liga]['teams'][m_l], raw_json[liga]['teams'][m_v]
         avg = raw_json[liga]['averages']
+        
+        # Lambdas
         mu_l = l_stats['att_h'] * v_stats['def_a'] * avg['league_home']
         mu_v = v_stats['att_a'] * l_stats['def_h'] * avg['league_away']
+        
+        # Probabilidades con Dixon-Coles
         ph, pd, pa = 0, 0, 0
         for x in range(7):
             for y in range(7):
-                prob = poisson.pmf(x, mu_l) * poisson.pmf(y, mu_v)
+                prob = (poisson.pmf(x, mu_l) * poisson.pmf(y, mu_v)) * ajuste_dixon_coles(x, y, mu_l, mu_v)
                 if x > y: ph += prob
                 elif x == y: pd += prob
                 else: pa += prob
+        
         edge = ph - (1/c_l)
         kelly = ((c_l * ph) - 1) / (c_l - 1) if edge > 0 else 0
         stake = round(max(0, min(kelly * 0.25 * 100, 5.0)), 2)
@@ -263,15 +274,25 @@ async def handle_pronostico(message):
             "stake": f"{stake}%", "nivel": nivel, "status": "⏳ PENDIENTE"
         })
         
-        header = f"🛠 REPORTE: {'✅' if check_odds else '❌'} Cuotas | ✅ Poisson ({ph*100:.1f}%) | {'✅' if check_h2h else '❌'} H2H\n{'—'*20}\n"
-        prompt_e = f"Analiza {m_l} vs {m_v}.\nPoisson: {ph*100:.1f}%\nCuotas: {c_l}, {c_e}, {c_v}\nH2H: {h2h_str}"
+        header = f"🛠 REPORTE TÉCNICO: {m_l} vs {m_v}\n{'—'*20}\n"
+        prompt_e = (
+            f"DATOS MATEMÁTICOS:\n"
+            f"- Lambdas: L:{mu_l:.2f} | V:{mu_v:.2f}\n"
+            f"- Poisson (Dixon-Coles): Gana:{ph*100:.1f}% | Empate:{pd*100:.1f}% | Pierde:{pa*100:.1f}%\n"
+            f"- Mercado: Cuota {c_l} | Edge: {edge*100:.1f}%\n"
+            f"- H2H: {h2h_str}\n"
+        )
+        
         analisis = await ejecutar_ia("estratega", prompt_e)
-        res_final = f"{header}{analisis}\n\n🛰 **ESTRATEGA:** `{SISTEMA_IA['estratega']['api']}`"
+        res_final = f"{header}{analisis}\n\n🛰 **NODO:** `{SISTEMA_IA['estratega']['nodo']}`"
+        
         if SISTEMA_IA["auditor"]["nodo"]:
             auditoria = await ejecutar_ia("auditor", f"Edge {edge*100:.1f}% | Estratega: {analisis}")
-            res_final += f"\n\n🛡 **AUDITOR:**\n{auditoria}"
+            res_final += f"\n\n🛡 **AUDITORÍA:**\n{auditoria}"
+            
         await bot.edit_message_text(res_final, message.chat.id, msg_espera.message_id, parse_mode='Markdown')
     except Exception as e:
+        logging.error(f"Error Pronóstico: {e}")
         await bot.edit_message_text(f"❌ Error: {e}", message.chat.id, msg_espera.message_id)
 
 # --- Comandos Visuales ---
@@ -302,7 +323,6 @@ async def cmd_validar(message):
         historial_url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/{FILE_PATH}"
         historial = requests.get(historial_url).json()
         
-        # Validamos usando los terminados recientemente
         data_api = await api_football_call("status=FINISHED")
         actualizados = 0
         if data_api and 'matches' in data_api:
@@ -330,34 +350,24 @@ async def cmd_validar(message):
 
 @bot.message_handler(commands=['partidos'])
 async def cmd_partidos(message):
-    # Uso de timezone.utc para evitar deprecation y asegurar precisión
     ahora_utc = datetime.now(timezone.utc)
     fecha_inicio = ahora_utc.strftime('%Y-%m-%d')
     fecha_fin = (ahora_utc + timedelta(days=7)).strftime('%Y-%m-%d')
     
     msg_espera = await bot.reply_to(message, f"📡 Consultando calendario (del {fecha_inicio} al {fecha_fin})...")
-    
-    # Llamada al endpoint PD corregido
     data = await api_football_call(f"dateFrom={fecha_inicio}&dateTo={fecha_fin}")
     
     if not data or not data.get('matches'):
-        await bot.edit_message_text(
-            f"📅 No hay partidos programados desde hoy ({fecha_inicio}) para la próxima semana.",
-            message.chat.id, msg_espera.message_id
-        )
+        await bot.edit_message_text(f"📅 No hay partidos programados.", message.chat.id, msg_espera.message_id)
         return
 
     txt = "⚽ **PRÓXIMOS PARTIDOS (LALIGA)**\n"
     txt += f"📅 _Rango: {fecha_inicio} al {fecha_fin}_\n{'—'*20}\n\n"
     
-    # Umbral de tiempo local para filtrar
     limite_actual = datetime.now(timezone.utc) + timedelta(hours=OFFSET_JUAREZ)
-    
     encontrados = 0
     for m in data['matches']:
         dt_partido = datetime.strptime(m['utcDate'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc) + timedelta(hours=OFFSET_JUAREZ)
-        
-        # Solo mostrar si el partido es ahora o en el futuro
         if dt_partido >= limite_actual:
             txt += f"🕒 `{dt_partido.strftime('%d/%m %H:%M')}`\n"
             txt += f"**{m['homeTeam']['shortName']} vs {m['awayTeam']['shortName']}**\n"
@@ -365,9 +375,7 @@ async def cmd_partidos(message):
             txt += f"{'—'*15}\n"
             encontrados += 1
 
-    if encontrados == 0:
-        txt = "✅ No quedan más partidos para hoy. Prueba mañana."
-
+    if encontrados == 0: txt = "✅ No quedan más partidos para hoy."
     await bot.edit_message_text(txt, message.chat.id, msg_espera.message_id, parse_mode='Markdown')
 
 @bot.message_handler(commands=['tabla'])
@@ -427,11 +435,11 @@ async def cb_fin(call): await bot.edit_message_text("🚀 **SISTEMA ACTIVADO**",
 
 @bot.message_handler(commands=['help'])
 async def cmd_help(message):
-    txt = ("🤖 **BOT ANALISTA V5.2**\n\n"
-           "• `/pronostico L vs V`: Poisson + Kelly + H2H.\n"
+    txt = ("🤖 **BOT ANALISTA V5.3**\n\n"
+           "• `/pronostico L vs V`: Poisson + Dixon-Coles + Deep Analysis.\n"
            "• `/historial`: Picks registrados visuales.\n"
            "• `/validar`: Actualiza resultados reales.\n"
-           "• `/config`: Cambia IAs.\n"
+           "• `/config`: Cambia IAs (Samba/Groq).\n"
            "• `/partidos`: Próximos juegos de LaLiga.")
     await bot.reply_to(message, txt, parse_mode='Markdown')
 
