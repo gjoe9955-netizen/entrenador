@@ -135,16 +135,18 @@ async def ejecutar_ia(rol, prompt):
         logging.error(f"Error en {config['api']}: {e}")
         return f"❌ Error en Nodo {config['api']}: {str(e)[:60]}"
 
-# --- Persistencia en GitHub ---
+# --- Persistencia en GitHub (NO BLOQUEANTE) ---
 async def guardar_en_github(nuevo_registro=None, historial_completo=None):
     url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}"
     headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
     try:
-        r = requests.get(url, headers=headers)
-        sha = r.json()['sha'] if r.status_code == 200 else None
+        # CAMBIO: Usar to_thread para no bloquear
+        r_json = await asyncio.to_thread(requests.get, url, headers=headers)
+        r = r_json.json()
+        sha = r['sha'] if r_json.status_code == 200 else None
         
         if historial_completo is None:
-            historial = json.loads(base64.b64decode(r.json()['content']).decode('utf-8')) if r.status_code == 200 else []
+            historial = json.loads(base64.b64decode(r['content']).decode('utf-8')) if r_json.status_code == 200 else []
             if nuevo_registro:
                 index_existente = next((i for i, reg in enumerate(historial) 
                                       if reg['partido'] == nuevo_registro['partido'] 
@@ -158,7 +160,8 @@ async def guardar_en_github(nuevo_registro=None, historial_completo=None):
 
         nuevo_contenido = base64.b64encode(json.dumps(historial, indent=4, ensure_ascii=False).encode('utf-8')).decode('utf-8')
         payload = {"message": "🤖 Actualización Historial", "content": nuevo_contenido, "sha": sha}
-        requests.put(url, headers=headers, json=payload)
+        # CAMBIO: Usar to_thread para no bloquear
+        await asyncio.to_thread(requests.put, url, headers=headers, json=payload)
     except Exception as e:
         logging.error(f"Error GitHub: {e}")
 
@@ -236,7 +239,7 @@ async def obtener_h2h_directo(equipo_l, equipo_v):
         logging.error(f"Error CSV: {e}")
         return "Error CSV.", False
 
-# --- Pronóstico ---
+# --- Pronóstico (CORREGIDA LECTURA JSON) ---
 @bot.message_handler(commands=['pronostico', 'valor'])
 async def handle_pronostico(message):
     if not SISTEMA_IA["estratega"]["nodo"]:
@@ -248,7 +251,9 @@ async def handle_pronostico(message):
     msg_espera = await bot.reply_to(message, "📡 Ejecutando Poisson + Dixon-Coles...")
     try:
         try:
-            raw_json = requests.get(URL_JSON, timeout=10).json()
+            # CAMBIO: to_thread para no bloquear al descargar el JSON
+            res_json = await asyncio.to_thread(requests.get, URL_JSON, timeout=10)
+            raw_json = res_json.json()
         except:
             with open('modelo_poisson.json', 'r', encoding='utf-8') as f:
                 raw_json = json.load(f)
@@ -318,13 +323,17 @@ async def handle_pronostico(message):
         logging.error(f"Error Pronóstico: {e}")
         await bot.edit_message_text(f"❌ Error: {e}", message.chat.id, msg_espera.message_id)
 
-# --- Comandos Visuales ---
+# --- Comandos Visuales (AÑADIDOS AWAIT FALTANTES) ---
 @bot.message_handler(commands=['historial'])
 async def cmd_historial(message):
     url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/{FILE_PATH}"
     try:
-        r = requests.get(url).json()
-        if not r: return await bot.reply_to(message, "📭 **HISTORIAL VACÍO**")
+        # CAMBIO: to_thread para no bloquear
+        r_json = await asyncio.to_thread(requests.get, url)
+        r = r_json.json()
+        if not r: 
+            # CAMBIO: Await faltante
+            return await bot.reply_to(message, "📭 **HISTORIAL VACÍO**")
         txt = "📊 **RESUMEN DE OPERACIONES**\n"
         txt += f"{'—'*20}\n\n"
         for i in r[-7:]:
@@ -336,15 +345,20 @@ async def cmd_historial(message):
             if i.get("marcador_real"): txt += f"⚽ **Resultado:** `{i['marcador_real']}`\n"
             txt += f"📈 **Nivel:** {i['nivel']}\n"
             txt += f"{'—'*18}\n"
+        # CAMBIO: Await faltante
         await bot.reply_to(message, txt, parse_mode='Markdown')
-    except: await bot.reply_to(message, "❌ Error al leer datos.")
+    except: 
+        # CAMBIO: Await faltante
+        await bot.reply_to(message, "❌ Error al leer datos.")
 
 @bot.message_handler(commands=['validar'])
 async def cmd_validar(message):
     msg = await bot.reply_to(message, "🔍 Validando resultados...")
     try:
         historial_url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/{FILE_PATH}"
-        historial = requests.get(historial_url).json()
+        # CAMBIO: to_thread para no bloquear
+        r_hist = await asyncio.to_thread(requests.get, historial_url)
+        historial = r_hist.json()
         
         data_api = await api_football_call("status=FINISHED")
         actualizados = 0
@@ -406,18 +420,24 @@ async def cmd_tabla(message):
     headers = {'X-Auth-Token': FOOTBALL_DATA_KEY}
     url = "https://api.football-data.org/v4/competitions/PD/standings"
     try:
-        r = requests.get(url, headers=headers).json()
+        # CAMBIO: to_thread para no bloquear
+        r_tab = await asyncio.to_thread(requests.get, url, headers=headers)
+        r = r_tab.json()
         txt = "🏆 **POSICIONES LALIGA:**\n"
         for t in r['standings'][0]['table'][:12]:
             txt += f"`{t['position']}.` **{t['team']['shortName']}** ({t['points']} pts)\n"
+        # CAMBIO: Await faltante
         await bot.reply_to(message, txt, parse_mode='Markdown')
     except: pass
 
 @bot.message_handler(commands=['equipos'])
 async def cmd_equipos(message):
-    res = requests.get(URL_JSON).json()
+    # CAMBIO: to_thread para no bloquear
+    r_eq = await asyncio.to_thread(requests.get, URL_JSON)
+    res = r_eq.json()
     liga = next(iter(res))
     equipos = ", ".join([f"`{e}`" for e in res[liga]['teams'].keys()])
+    # CAMBIO: Await faltante
     await bot.reply_to(message, f"📋 **EQUIPOS VÁLIDOS:**\n{equipos}", parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('set_rol_'))
@@ -460,6 +480,12 @@ async def cmd_help(message):
             "• `/config`: Cambia IAs (Samba/Groq).\n"
             "• `/partidos`: Próximos juegos de LaLiga.")
     await bot.reply_to(message, txt, parse_mode='Markdown')
+
+# CAMBIO: Añadido manejador inicial para /config que faltaba
+@bot.message_handler(commands=['config'])
+async def cmd_config(message):
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🧠 ASIGNAR ESTRATEGA", callback_data="set_rol_estratega"))
+    await bot.reply_to(message, "🛠 **CONFIGURACIÓN DE RED IA**", reply_markup=markup)
 
 async def main():
     logging.info("Iniciando Bot...")
