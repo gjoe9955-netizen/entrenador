@@ -6,12 +6,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- Configuración Corregida ---
+# --- Configuración Sincronizada ---
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
-# Usamos el nombre exacto de tus capturas de GitHub/Railway
+# CORRECCIÓN: Usar el nombre de Railway para consistencia
 API_KEY_FOOTBALL = os.getenv('FOOTBALL_DATA_API_KEY') 
 REPO_PATH = "gjoe9955-netizen/entrenador2"
-# Unificado con el nombre que usa el bot
+# CORRECCIÓN: Apuntar al archivo correcto que usa el bot
 HISTORIAL_FILE = "historial.json" 
 
 def obtener_resultados_recientes():
@@ -27,11 +27,6 @@ def obtener_resultados_recientes():
         print(f"❌ Error al consultar API: {e}")
         return []
 
-def normalizar_nombre(nombre):
-    """Limpia nombres para facilitar la coincidencia"""
-    if not nombre: return ""
-    return nombre.lower().replace("rcd", "").replace("cf", "").replace("real", "").strip()
-
 def actualizar_historial():
     if not GITHUB_TOKEN:
         print("❌ Error: No se encontró GITHUB_TOKEN.")
@@ -39,71 +34,67 @@ def actualizar_historial():
     
     # 1. Obtener Historial actual desde GitHub
     url_gh = f"https://api.github.com/repos/{REPO_PATH}/contents/{HISTORIAL_FILE}"
-    headers_gh = {"Authorization": f"token {GITHUB_TOKEN}"}
+    headers_gh = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
     
     try:
-        res_get = requests.get(url_gh, headers=headers_gh)
-        if res_get.status_code != 200:
-            print(f"❌ No se pudo obtener el historial de GitHub: {res_get.text}")
+        r_gh = requests.get(url_gh, headers=headers_gh)
+        if r_gh.status_code != 200:
+            print("❌ No se pudo obtener el historial de GitHub.")
             return
             
-        file_data = res_get.json()
-        content = base64.b64decode(file_data['content']).decode('utf-8')
-        historial = json.loads(content)
-
+        file_data = r_gh.json()
+        historial = json.loads(base64.b64decode(file_data['content']).decode('utf-8'))
+        
         # 2. Obtener resultados reales
-        resultados_reales = obtener_resultados_recientes()
-        if not resultados_reales:
-            print("⚠️ No se obtuvieron resultados nuevos de la API.")
-            return
-
+        partidos_api = obtener_resultados_recientes()
         cambio = False
-        # 3. Cruzar datos
+
+        # 3. Comparar y Cruzar Datos
         for pick in historial:
-            # Sincronizado con el status del bot (con emoji)
             if pick.get("status") == "⏳ PENDIENTE":
-                equipo_l, equipo_v = pick["partido"].split(" vs ")
-                
-                for match in resultados_reales:
-                    api_l = match['homeTeam']['name']
-                    api_v = match['awayTeam']['name']
+                for match in partidos_api:
+                    home_api = match['homeTeam']['name'].lower()
+                    away_api = match['awayTeam']['name'].lower()
                     
-                    if normalizar_nombre(equipo_l) == normalizar_nombre(api_l) and \
-                       normalizar_nombre(equipo_v) == normalizar_nombre(api_v):
-                        
+                    # Verificamos si el partido del historial coincide con el de la API
+                    if home_api in pick['partido'].lower() and away_api in pick['partido'].lower():
                         goles_l = match['score']['fullTime']['home']
                         goles_v = match['score']['fullTime']['away']
                         marcador_real = f"{goles_l}-{goles_v}"
-                        
+                        resultado = match['score']['winner'] # 'HOME_TEAM', 'AWAY_TEAM', 'DRAW'
+
                         pick["marcador_real"] = marcador_real
-                        pick["status"] = "✅ REVISADO" # Mantenemos el estilo de emojis
                         
-                        # Determinar ganador real
-                        if goles_l > goles_v: pick["ganador_real"] = "Local"
-                        elif goles_l < goles_v: pick["ganador_real"] = "Visitante"
-                        else: pick["ganador_real"] = "Empate"
+                        # Lógica de validación de acierto
+                        if pick['pick'] == "No Bet":
+                            pick["status"] = "➖ VOID"
+                        elif (resultado == 'HOME_TEAM' and home_api in pick['pick'].lower()) or \
+                             (resultado == 'AWAY_TEAM' and away_api in pick['pick'].lower()) or \
+                             (resultado == 'DRAW' and "empate" in pick['pick'].lower()):
+                            pick["status"] = "✅ WIN"
+                        else:
+                            pick["status"] = "❌ LOSS"
                         
                         cambio = True
-                        print(f"✅ Resultado encontrado: {pick['partido']} -> {marcador_real}")
-                        break
+                        print(f"✅ Auditado: {pick['partido']} -> {marcador_real}")
 
+        # 4. Guardar si hubo cambios
         if cambio:
-            # Serializar correctamente
             json_str = json.dumps(historial, indent=4, ensure_ascii=False)
             new_content = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
             
             payload = {
-                "message": "Auditoría automática de resultados 🏟️",
+                "message": "Auditoría automática de resultados",
                 "content": new_content,
                 "sha": file_data['sha']
             }
             res_put = requests.put(url_gh, headers=headers_gh, json=payload)
             if res_put.status_code == 200:
-                print("🚀 Historial sincronizado con éxito en GitHub.")
+                print("🚀 GitHub actualizado con los resultados reales.")
             else:
-                print(f"❌ Error al subir a GitHub: {res_put.text}")
+                print(f"❌ Error al subir: {res_put.text}")
         else:
-            print("ℹ️ No hay nuevos resultados que coincidan con los picks pendientes.")
+            print("ℹ️ Nada nuevo que auditar.")
 
     except Exception as e:
         print(f"❌ Error general: {e}")
