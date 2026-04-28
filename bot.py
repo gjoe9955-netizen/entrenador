@@ -32,28 +32,28 @@ FILE_PATH = "historial.json"
 
 bot = AsyncTeleBot(TOKEN)
 
-# --- Diccionario de Mapeo: API/JSON -> CSV ---
+# --- Diccionario de Mapeo: API/JSON -> CSV/ODDS ---
 MAPEO_EQUIPOS = {
     "Girona FC": "Girona",
-    "Rayo Vallecano de Madrid": "Vallecano",
+    "Rayo Vallecano de Madrid": "Rayo Vallecano",
     "Villarreal CF": "Villarreal",
     "Real Oviedo": "Oviedo",
     "RCD Mallorca": "Mallorca",
     "FC Barcelona": "Barcelona",
-    "Deportivo Alavés": "Alaves",
+    "Deportivo Alavés": "Alavés",
     "Levante UD": "Levante",
     "Valencia CF": "Valencia",
-    "Real Sociedad de Fútbol": "Sociedad",
-    "RC Celta de Vigo": "Celta",
+    "Real Sociedad de Fútbol": "Real Sociedad",
+    "RC Celta de Vigo": "Celta Vigo",
     "Getafe CF": "Getafe",
-    "Athletic Club": "Ath Bilbao",
+    "Athletic Club": "Athletic Bilbao",
     "Sevilla FC": "Sevilla",
-    "RCD Espanyol de Barcelona": "Espanol",
-    "Club Atlético de Madrid": "Ath Madrid",
-    "Elche CF": "Elche",
-    "Real Betis Balompié": "Betis",
+    "RCD Espanyol de Barcelona": "Espanyol",
+    "Club Atlético de Madrid": "Atlético Madrid",
+    "Elche CF": "Elche CF",
+    "Real Betis Balompié": "Real Betis",
     "Real Madrid CF": "Real Madrid",
-    "CA Osasuna": "Osasuna"
+    "CA Osasuna": "CA Osasuna"
 }
 
 # --- Estado Global Dinámico ---
@@ -169,16 +169,22 @@ async def obtener_datos_mercado(equipo_l):
         url = "https://api.the-odds-api.com/v4/sports/soccer_spain_la_liga/odds/"
         params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
         r = await asyncio.to_thread(requests.get, url, params=params, timeout=10)
+        
+        # Obtener nombre normalizado para búsqueda
+        nombre_busqueda = MAPEO_EQUIPOS.get(equipo_l, equipo_l).lower()
+        
         if r.status_code == 200:
             for match in r.json():
                 home = match['home_team'].lower()
-                if equipo_l.lower() in home or home in equipo_l.lower():
+                # Lógica de coincidencia mejorada
+                if nombre_busqueda in home or home in nombre_busqueda:
                     odds = match['bookmakers'][0]['markets'][0]['outcomes']
                     ol = next(o['price'] for o in odds if o['name'] == match['home_team'])
                     ov = next(o['price'] for o in odds if o['name'] == match['away_team'])
-                    oe = next(o['price'] for o in odds if o['name'] == 'Draw' or o['name'] == 'Tie')
+                    oe = next(o['price'] for o in odds if o['name'].lower() in ['draw', 'tie', 'empate'])
                     return ol, oe, ov, True
-    except: pass
+    except Exception as e:
+        logging.error(f"Error Odds API: {e}")
     return 1.85, 3.50, 4.00, False
 
 async def api_football_call(params):
@@ -205,12 +211,19 @@ async def obtener_h2h_directo(equipo_l, equipo_v):
         r = await asyncio.to_thread(requests.get, URL_CSV, timeout=10)
         if r.status_code != 200: return "Error CSV.", False
         df = pd.read_csv(io.StringIO(r.text))
-        mask = ((df['HomeTeam'] == csv_l) & (df['AwayTeam'] == csv_v) | (df['HomeTeam'] == csv_v) & (df['AwayTeam'] == csv_l))
+        
+        # Normalización para CSV (Alaves sin tilde es común en football-data.co.uk)
+        csv_l_norm = csv_l.replace('á', 'a').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ú', 'u')
+        csv_v_norm = csv_v.replace('á', 'a').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ú', 'u')
+
+        mask = ((df['HomeTeam'].str.contains(csv_l_norm, case=False)) & (df['AwayTeam'].str.contains(csv_v_norm, case=False)) | 
+                (df['HomeTeam'].str.contains(csv_v_norm, case=False)) & (df['AwayTeam'].str.contains(csv_l_norm, case=False)))
+        
         h2h = df[mask]
         if h2h.empty: return f"Sin H2H en CSV.", False
         l, v, e = 0, 0, 0
         for _, row in h2h.iterrows():
-            is_l_home = (row['HomeTeam'] == csv_l)
+            is_l_home = (csv_l_norm.lower() in row['HomeTeam'].lower())
             if row['FTR'] == 'H':
                 if is_l_home: l += 1
                 else: v += 1
@@ -219,7 +232,9 @@ async def obtener_h2h_directo(equipo_l, equipo_v):
                 else: l += 1
             else: e += 1
         return f"Local {l} | Vis {v} | Emp {e}", True
-    except: return "Error CSV.", False
+    except Exception as e: 
+        logging.error(f"Error CSV: {e}")
+        return "Error CSV.", False
 
 # --- Pronóstico ---
 @bot.message_handler(commands=['pronostico', 'valor'])
@@ -277,7 +292,7 @@ async def handle_pronostico(message):
         # --- Generación de Reporte y Checks de Herramientas ---
         status_odds = "✅" if check_odds else "❌"
         status_h2h = "✅" if check_h2h else "❌"
-        status_poisson = "✅" # Se marca como usado siempre que el cálculo Dixon-Coles finaliza.
+        status_poisson = "✅" 
         
         header = f"🛠 REPORTE TÉCNICO: {m_l} vs {m_v}\n"
         header += f"{status_odds} Odds | {status_poisson} Poisson | {status_h2h} H2H\n"
@@ -405,11 +420,6 @@ async def cmd_equipos(message):
     equipos = ", ".join([f"`{e}`" for e in res[liga]['teams'].keys()])
     await bot.reply_to(message, f"📋 **EQUIPOS VÁLIDOS:**\n{equipos}", parse_mode='Markdown')
 
-@bot.message_handler(commands=['config'])
-async def cmd_config(message):
-    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🧠 ASIGNAR ESTRATEGA", callback_data="set_rol_estratega"))
-    await bot.reply_to(message, "🛠 **CONFIGURACIÓN DE RED IA**", reply_markup=markup)
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith('set_rol_'))
 async def cb_rol(call):
     rol = call.data.split('_')[-1]
@@ -444,11 +454,11 @@ async def cb_fin(call): await bot.edit_message_text("🚀 **SISTEMA ACTIVADO**",
 @bot.message_handler(commands=['help'])
 async def cmd_help(message):
     txt = ("🤖 **BOT ANALISTA V5.3**\n\n"
-           "• `/pronostico L vs V`: Poisson + Dixon-Coles + Deep Analysis.\n"
-           "• `/historial`: Picks registrados visuales.\n"
-           "• `/validar`: Actualiza resultados reales.\n"
-           "• `/config`: Cambia IAs (Samba/Groq).\n"
-           "• `/partidos`: Próximos juegos de LaLiga.")
+            "• `/pronostico L vs V`: Poisson + Dixon-Coles + Deep Analysis.\n"
+            "• `/historial`: Picks registrados visuales.\n"
+            "• `/validar`: Actualiza resultados reales.\n"
+            "• `/config`: Cambia IAs (Samba/Groq).\n"
+            "• `/partidos`: Próximos juegos de LaLiga.")
     await bot.reply_to(message, txt, parse_mode='Markdown')
 
 async def main():
