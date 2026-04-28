@@ -70,7 +70,7 @@ SISTEMA_IA = {
     ]
 }
 
-# --- Motores de IA (Prompts Optimizados) ---
+# --- Motores de IA ---
 async def ejecutar_ia(rol, prompt):
     config = SISTEMA_IA[rol]
     if not config["nodo"]: return None
@@ -126,18 +126,28 @@ async def ejecutar_ia(rol, prompt):
         logging.error(f"Error en {config['api']}: {e}")
         return f"❌ Error en Nodo {config['api']}: {str(e)[:60]}"
 
-# --- Persistencia en GitHub ---
+# --- Persistencia en GitHub (Mejorada: Anti-Duplicados) ---
 async def guardar_en_github(nuevo_registro=None, historial_completo=None):
     url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}"
     headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
     try:
         r = requests.get(url, headers=headers)
         sha = r.json()['sha'] if r.status_code == 200 else None
+        
         if historial_completo is None:
             historial = json.loads(base64.b64decode(r.json()['content']).decode('utf-8')) if r.status_code == 200 else []
-            if nuevo_registro: historial.append(nuevo_registro)
+            if nuevo_registro:
+                # Si el partido ya existe como PENDIENTE, se actualiza en lugar de duplicar
+                index_existente = next((i for i, reg in enumerate(historial) 
+                                      if reg['partido'] == nuevo_registro['partido'] 
+                                      and reg['status'] == "⏳ PENDIENTE"), None)
+                if index_existente is not None:
+                    historial[index_existente] = nuevo_registro
+                else:
+                    historial.append(nuevo_registro)
         else:
             historial = historial_completo
+
         nuevo_contenido = base64.b64encode(json.dumps(historial, indent=4, ensure_ascii=False).encode('utf-8')).decode('utf-8')
         payload = {"message": "🤖 Actualización Historial", "content": nuevo_contenido, "sha": sha}
         requests.put(url, headers=headers, json=payload)
@@ -181,13 +191,9 @@ async def obtener_h2h_directo(equipo_l, equipo_v):
         r = await asyncio.to_thread(requests.get, URL_CSV, timeout=10)
         if r.status_code != 200: return "Error CSV.", False
         df = pd.read_csv(io.StringIO(r.text))
-        mask = (
-            (df['HomeTeam'] == csv_l) & (df['AwayTeam'] == csv_v) |
-            (df['HomeTeam'] == csv_v) & (df['AwayTeam'] == csv_l)
-        )
+        mask = ((df['HomeTeam'] == csv_l) & (df['AwayTeam'] == csv_v) | (df['HomeTeam'] == csv_v) & (df['AwayTeam'] == csv_l))
         h2h = df[mask]
-        if h2h.empty: 
-            return f"Sin H2H en CSV para {csv_l} vs {csv_v}.", False
+        if h2h.empty: return f"Sin H2H en CSV.", False
         l, v, e = 0, 0, 0
         for _, row in h2h.iterrows():
             is_l_home = (row['HomeTeam'] == csv_l)
@@ -198,12 +204,10 @@ async def obtener_h2h_directo(equipo_l, equipo_v):
                 if is_l_home: v += 1
                 else: l += 1
             else: e += 1
-        return f"H2H Temp Actual: Local {l} | Vis {v} | Emp {e}", True
-    except Exception as e:
-        logging.error(f"H2H CSV Error: {e}")
-        return "Error Procesando CSV.", False
+        return f"Local {l} | Vis {v} | Emp {e}", True
+    except: return "Error CSV.", False
 
-# --- Pronóstico y Criterio de Kelly ---
+# --- Pronóstico ---
 @bot.message_handler(commands=['pronostico', 'valor'])
 async def handle_pronostico(message):
     if not SISTEMA_IA["estratega"]["nodo"]:
@@ -219,7 +223,7 @@ async def handle_pronostico(message):
         m_l = next((t for t in raw_json[liga]['teams'] if t.lower() in l_q.lower() or l_q.lower() in t.lower()), None)
         m_v = next((t for t in raw_json[liga]['teams'] if t.lower() in v_q.lower() or v_q.lower() in t.lower()), None)
         if not m_l or not m_v:
-            await bot.edit_message_text("❌ Equipos no coinciden con el JSON.", message.chat.id, msg_espera.message_id); return
+            await bot.edit_message_text("❌ Equipos no coinciden.", message.chat.id, msg_espera.message_id); return
         c_l, c_e, c_v, check_odds = await obtener_datos_mercado(m_l)
         h2h_str, check_h2h = await obtener_h2h_directo(m_l, m_v)
         l_stats, v_stats = raw_json[liga]['teams'][m_l], raw_json[liga]['teams'][m_v]
@@ -238,50 +242,46 @@ async def handle_pronostico(message):
         stake = round(max(0, min(kelly * 0.25 * 100, 5.0)), 2)
         nivel = "DIAMANTE 💎" if edge > 0.05 else "ORO 🥇" if edge > 0.02 else "PLATA 🥈" if edge > 0 else "SIN VALOR ⚠️"
         
-        asyncio.create_task(guardar_en_github(nuevo_registro={
+        await guardar_en_github(nuevo_registro={
             "fecha": (datetime.utcnow() + timedelta(hours=OFFSET_JUAREZ)).strftime('%Y-%m-%d %H:%M'),
             "partido": f"{m_l} vs {m_v}", "pick": m_l if edge > 0 else "No Bet",
             "poisson": f"{ph*100:.1f}%", "cuota": c_l, "edge": f"{edge*100:.1f}%",
             "stake": f"{stake}%", "nivel": nivel, "status": "⏳ PENDIENTE"
-        }))
+        })
         
-        header = f"🛠 REPORTE: {'✅' if check_odds else '❌'} Cuotas | ✅ Poisson ({ph*100:.1f}%) | {'✅' if check_h2h else '❌'} H2H (CSV)\n{'—'*20}\n"
-        prompt_e = (
-            f"Analiza el partido {m_l} vs {m_v}.\n"
-            f"- Probabilidad Poisson: {ph*100:.1f}%\n"
-            f"- Cuota Local: {c_l} | Empate: {c_e} | Visitante: {c_v}\n"
-            f"- Datos H2H (CSV): {h2h_str}\n"
-            f"- Ventaja (Edge): {edge*100:.1f}%\n"
-            f"- Stake sugerido: {stake}%\n"
-            "Valida si el mercado ofrece valor basandote en Poisson y el H2H."
-        )
+        header = f"🛠 REPORTE: {'✅' if check_odds else '❌'} Cuotas | ✅ Poisson ({ph*100:.1f}%) | {'✅' if check_h2h else '❌'} H2H\n{'—'*20}\n"
+        prompt_e = f"Analiza {m_l} vs {m_v}.\nPoisson: {ph*100:.1f}% | Cuotas: {c_l}, {c_e}, {c_v}\nH2H: {h2h_str}\nEdge: {edge*100:.1f}%"
         analisis = await ejecutar_ia("estratega", prompt_e)
-        res_final = f"{header}{analisis}\n\n🛰 **ESTRATEGA:** `{SISTEMA_IA['estratega']['api']}` ({SISTEMA_IA['estratega']['nodo']})"
+        res_final = f"{header}{analisis}\n\n🛰 **ESTRATEGA:** `{SISTEMA_IA['estratega']['api']}`"
         if SISTEMA_IA["auditor"]["nodo"]:
-            audit_prompt = f"Analiza: Edge {edge*100:.1f}% vs Stake {stake}%.\nCSV: {h2h_str}\nEstratega: {analisis}"
-            auditoria = await ejecutar_ia("auditor", audit_prompt)
-            res_final += f"\n\n🛡 **AUDITOR:**\n{auditoria}\n(`{SISTEMA_IA['auditor']['nodo']}`)"
+            auditoria = await ejecutar_ia("auditor", f"Edge {edge*100:.1f}% | H2H: {h2h_str}\nEstratega: {analisis}")
+            res_final += f"\n\n🛡 **AUDITOR:**\n{auditoria}"
         await bot.edit_message_text(res_final, message.chat.id, msg_espera.message_id, parse_mode='Markdown')
     except Exception as e:
-        logging.error(f"Error Pronóstico: {e}")
-        await bot.edit_message_text(f"❌ Error crítico en el proceso.", message.chat.id, msg_espera.message_id)
+        await bot.edit_message_text(f"❌ Error: {e}", message.chat.id, msg_espera.message_id)
 
-# --- Comandos base ---
+# --- Comandos Visuales ---
 @bot.message_handler(commands=['historial'])
 async def cmd_historial(message):
     url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/{FILE_PATH}"
     try:
         r = requests.get(url).json()
-        if not r: return await bot.reply_to(message, "📭 Vacío.")
-        txt = "📜 **HISTORIAL:**\n"
-        for i in r[-8:]:
-            txt += f"📅 `{i['fecha']}` | **{i['partido']}** | {i['status']}\n"
+        if not r: return await bot.reply_to(message, "📭 **HISTORIAL VACÍO**")
+        txt = "📊 **RESUMEN DE OPERACIONES**\n"
+        txt += f"{'—'*20}\n\n"
+        for i in r[-7:]:
+            icon = "✅" if "WIN" in i['status'] else "❌" if "LOSS" in i['status'] else "➖" if "VOID" in i['status'] else "⏳"
+            txt += f"{icon} **{i['partido']}**\n"
+            txt += f"📅 `{i['fecha']}`\n"
+            txt += f"🎯 **Pick:** `{i['pick']}` | 💰 **Stake:** `{i['stake']}`\n"
+            txt += f"📈 **Nivel:** {i['nivel']}\n"
+            txt += f"{'—'*18}\n"
         await bot.reply_to(message, txt, parse_mode='Markdown')
-    except: await bot.reply_to(message, "❌ Error al leer GitHub.")
+    except: await bot.reply_to(message, "❌ Error al leer datos.")
 
 @bot.message_handler(commands=['validar'])
 async def cmd_validar(message):
-    msg = await bot.reply_to(message, "🔍 Cruzando datos con API-Football...")
+    msg = await bot.reply_to(message, "🔍 Validando resultados...")
     try:
         historial = requests.get(f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/{FILE_PATH}").json()
         data_api = await api_football_call("matches?status=FINISHED")
@@ -368,15 +368,15 @@ async def cb_fin(call): await bot.edit_message_text("🚀 **SISTEMA ACTIVADO**",
 @bot.message_handler(commands=['help'])
 async def cmd_help(message):
     txt = ("🤖 **BOT ANALISTA V5.2**\n\n"
-           "• `/pronostico L vs V`: Poisson + Kelly + H2H Exacto.\n"
-           "• `/historial`: Picks registrados.\n"
+           "• `/pronostico L vs V`: Poisson + Kelly + H2H.\n"
+           "• `/historial`: Picks registrados visuales.\n"
            "• `/validar`: Actualiza resultados reales.\n"
            "• `/config`: Cambia IAs.\n"
            "• `/partidos`: Próximos juegos.")
     await bot.reply_to(message, txt, parse_mode='Markdown')
 
 async def main():
-    logging.info("Bot Iniciado con Mapeo Exacto...")
+    logging.info("Bot Iniciado...")
     await bot.polling(non_stop=True)
 
 if __name__ == "__main__":
