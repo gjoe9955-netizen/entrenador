@@ -89,14 +89,20 @@ async def ejecutar_ia(rol, prompt):
 
     instrucciones = {
         "estratega": (
-            "Eres un analista sintetico deportivo. PROHIBIDO repetir datos numericos del prompt de forma literal. "
-            "Estilo: 'Bullet points'. Analiza si el historial H2H del CSV valida o contradice la proyeccion de Poisson. "
-            "Maximo 120 palabras."
+            "Eres un experto en Value Betting. Analiza: 1) Probabilidad Poisson vs Cuota Real (implícita). "
+            "2) Tendencia H2H del CSV. Tu objetivo es emitir una PREDICCIÓN FINAL. "
+            "Formato obligatorio (máximo 100 palabras):\n"
+            "• ANÁLISIS: ¿La cuota paga más de lo que el modelo sugiere? ¿El H2H confirma la superioridad?\n"
+            "• MERCADO RELEVANTE: Indica la cuota analizada y su valor.\n"
+            "• PREDICCIÓN: Pronóstico directo (1X2) y justificación breve.\n"
+            "Sé agresivo detectando valor."
         ),
         "auditor": (
             "Eres un Auditor de Riesgos. Prohibido saludar. "
-            "Evalua si el Estratega ignoro la tendencia del CSV y si el Stake es coherente con el Edge. "
-            "Maximo 2 parrafos cortos."
+            "Valida: Si el Edge es > 0 y el H2H es favorable, aprueba el Stake. "
+            "Si el Edge es negativo, confirma que el Stake 0% es la única acción lógica. "
+            "Reporta incongruencias matemáticas entre el análisis del estratega y los datos duros. "
+            "Máximo 50 palabras."
         )
     }
 
@@ -164,30 +170,21 @@ async def api_football_call(endpoint):
 async def obtener_h2h_directo(equipo_l, equipo_v):
     URL_CSV = "https://www.football-data.co.uk/mmz4281/2526/SP1.csv"
     try:
-        # 1. Obtener nombres del CSV vía Mapeo
         csv_l = MAPEO_EQUIPOS.get(equipo_l)
         csv_v = MAPEO_EQUIPOS.get(equipo_v)
-
         if not csv_l or not csv_v:
-            logging.warning(f"⚠️ Nombres no mapeados: {equipo_l} o {equipo_v}. Usando fallback...")
             csv_l = equipo_l.split()[0]
             csv_v = equipo_v.split()[0]
-
         r = await asyncio.to_thread(requests.get, URL_CSV, timeout=10)
         if r.status_code != 200: return "Error CSV.", False
-        
         df = pd.read_csv(io.StringIO(r.text))
-        
-        # 2. Búsqueda Exacta para evitar falsos positivos (Real vs Villarreal)
         mask = (
             (df['HomeTeam'] == csv_l) & (df['AwayTeam'] == csv_v) |
             (df['HomeTeam'] == csv_v) & (df['AwayTeam'] == csv_l)
         )
         h2h = df[mask]
-        
         if h2h.empty: 
             return f"Sin H2H en CSV para {csv_l} vs {csv_v}.", False
-        
         l, v, e = 0, 0, 0
         for _, row in h2h.iterrows():
             is_l_home = (row['HomeTeam'] == csv_l)
@@ -208,34 +205,24 @@ async def obtener_h2h_directo(equipo_l, equipo_v):
 async def handle_pronostico(message):
     if not SISTEMA_IA["estratega"]["nodo"]:
         await bot.reply_to(message, "🚨 Configura los nodos con `/config`."); return
-
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2 or " vs " not in parts[1]:
         await bot.reply_to(message, "⚠️ `/pronostico Local vs Visitante`."); return
-
     l_q, v_q = [t.strip() for t in parts[1].split(" vs ")]
     msg_espera = await bot.reply_to(message, "📡 Analizando probabilidades...")
-
     try:
         raw_json = requests.get(URL_JSON).json()
         liga = next(iter(raw_json))
-        
-        # Match de nombres exactos usando el JSON
         m_l = next((t for t in raw_json[liga]['teams'] if t.lower() in l_q.lower() or l_q.lower() in t.lower()), None)
         m_v = next((t for t in raw_json[liga]['teams'] if t.lower() in v_q.lower() or v_q.lower() in t.lower()), None)
-
         if not m_l or not m_v:
             await bot.edit_message_text("❌ Equipos no coinciden con el JSON.", message.chat.id, msg_espera.message_id); return
-
         c_l, c_e, c_v, check_odds = await obtener_datos_mercado(m_l)
         h2h_str, check_h2h = await obtener_h2h_directo(m_l, m_v)
-
         l_stats, v_stats = raw_json[liga]['teams'][m_l], raw_json[liga]['teams'][m_v]
         avg = raw_json[liga]['averages']
-        
         mu_l = l_stats['att_h'] * v_stats['def_a'] * avg['league_home']
         mu_v = v_stats['att_a'] * l_stats['def_h'] * avg['league_away']
-        
         ph, pd, pa = 0, 0, 0
         for x in range(7):
             for y in range(7):
@@ -243,43 +230,38 @@ async def handle_pronostico(message):
                 if x > y: ph += prob
                 elif x == y: pd += prob
                 else: pa += prob
-
         edge = ph - (1/c_l)
         kelly = ((c_l * ph) - 1) / (c_l - 1) if edge > 0 else 0
         stake = round(max(0, min(kelly * 0.25 * 100, 5.0)), 2)
         nivel = "DIAMANTE 💎" if edge > 0.05 else "ORO 🥇" if edge > 0.02 else "PLATA 🥈" if edge > 0 else "SIN VALOR ⚠️"
-
         asyncio.create_task(guardar_en_github(nuevo_registro={
             "fecha": (datetime.utcnow() + timedelta(hours=OFFSET_JUAREZ)).strftime('%Y-%m-%d %H:%M'),
             "partido": f"{m_l} vs {m_v}", "pick": m_l if edge > 0 else "No Bet",
             "poisson": f"{ph*100:.1f}%", "cuota": c_l, "edge": f"{edge*100:.1f}%",
             "stake": f"{stake}%", "nivel": nivel, "status": "⏳ PENDIENTE"
         }))
-
         header = f"🛠 REPORTE: {'✅' if check_odds else '❌'} Cuotas | ✅ Poisson ({ph*100:.1f}%) | {'✅' if check_h2h else '❌'} H2H (CSV)\n{'—'*20}\n"
         prompt_e = (
             f"Analiza el partido {m_l} vs {m_v}.\n"
             f"- Probabilidad Poisson: {ph*100:.1f}%\n"
+            f"- Cuota Local: {c_l} | Empate: {c_e} | Visitante: {c_v}\n"
             f"- Datos H2H (CSV): {h2h_str}\n"
             f"- Ventaja (Edge): {edge*100:.1f}%\n"
-            f"- Stake: {stake}%\n"
-            "Valida si el H2H apoya la proyeccion Poisson."
+            f"- Stake sugerido: {stake}%\n"
+            "Valida si el mercado ofrece valor basandote en Poisson y el H2H."
         )
-        
         analisis = await ejecutar_ia("estratega", prompt_e)
         res_final = f"{header}{analisis}\n\n🛰 **ESTRATEGA:** `{SISTEMA_IA['estratega']['api']}` ({SISTEMA_IA['estratega']['nodo']})"
-
         if SISTEMA_IA["auditor"]["nodo"]:
             audit_prompt = f"Analiza: Edge {edge*100:.1f}% vs Stake {stake}%.\nCSV: {h2h_str}\nEstratega: {analisis}"
             auditoria = await ejecutar_ia("auditor", audit_prompt)
             res_final += f"\n\n🛡 **AUDITOR:**\n{auditoria}\n(`{SISTEMA_IA['auditor']['nodo']}`)"
-
         await bot.edit_message_text(res_final, message.chat.id, msg_espera.message_id, parse_mode='Markdown')
     except Exception as e:
         logging.error(f"Error Pronóstico: {e}")
         await bot.edit_message_text(f"❌ Error crítico en el proceso.", message.chat.id, msg_espera.message_id)
 
-# --- Comandos base (Historial, Validar, Tabla, etc. se mantienen igual) ---
+# --- Comandos base ---
 @bot.message_handler(commands=['historial'])
 async def cmd_historial(message):
     url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/{FILE_PATH}"
