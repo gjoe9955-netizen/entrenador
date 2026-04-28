@@ -1,4 +1,4 @@
-# BOT ANALISTA V5.7 - FULL COMMANDS & NODES
+# BOT ANALISTA V5.7.1 - FULL COMMANDS & EQUIPOS
 # IA / xG / Poisson / Kelly / H2H / Gestión de Comandos
 
 import os
@@ -31,7 +31,7 @@ bot = AsyncTeleBot(TOKEN)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
 # ==================================================
-# NODOS Y PROMPTS (RESTAURADOS)
+# NODOS Y PROMPTS
 # ==================================================
 SISTEMA_IA = {
     "estratega": {"api": None, "nodo": None},
@@ -52,6 +52,10 @@ SISTEMA_IA = {
     ]
 }
 
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+# [ZONA DE PROMPTS] - CAMBIA AQUÍ LAS INSTRUCCIONES
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
 PROMTS_SISTEMA = {
     "estratega": """Eres un Analista Cuántico de Apuestas. 
     PROCESAMIENTO: Usa obligatoriamente los datos etiquetados: [POISSON], [xG], [CUOTA], [EDGE].
@@ -61,6 +65,10 @@ PROMTS_SISTEMA = {
     "auditor": """Eres un Gestor de Riesgos. Busca debilidades. 
     Compara el H2H con el Edge calculado. Si los datos son inconsistentes, RECHAZA el pick."""
 }
+
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+# [FIN ZONA DE PROMPTS]
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
 MAPEO_EQUIPOS = {
     "athletic": 77, "atleti": 78, "osasuna": 79, "espanyol": 80,
@@ -100,13 +108,25 @@ async def ejecutar_ia(rol, prompt_data):
 @bot.message_handler(commands=["start", "help"])
 async def help_cmd(message):
     txt = (
-        "🤖 *BOT ANALISTA V5.7 PRO*\n\n"
+        "🤖 *BOT ANALISTA V5.7.1 PRO*\n\n"
         "📊 `/pronostico Local vs Visitante` - Análisis completo.\n"
-        "📋 `/historial` - Ver últimos 10 movimientos en GitHub.\n"
-        "⚙️ `/config` - Configurar Nodos de SambaNova o Groq.\n\n"
+        "📋 `/historial` - Ver últimos registros.\n"
+        "🏟 `/equipos` - Ver lista de equipos disponibles.\n"
+        "⚙️ `/config` - Configurar Nodos IA.\n\n"
         "💡 *Ejemplo:* `/pronostico Real Madrid vs Barcelona`"
     )
     await bot.reply_to(message, txt, parse_mode="Markdown")
+
+@bot.message_handler(commands=["equipos"])
+async def equipos_cmd(message):
+    nombres = sorted([k.capitalize() for k in MAPEO_EQUIPOS.keys()])
+    columnas = 2
+    filas = [nombres[i:i + columnas] for i in range(0, len(nombres), columnas)]
+    tabla = "🏟 *EQUIPOS MAPEADOS (La Liga)*\n\n"
+    for fila in filas:
+        tabla += " | ".join([f"`{name}`" for name in fila]) + "\n"
+    tabla += "\n_Escribe los nombres tal cual aparecen para evitar errores._"
+    await bot.reply_to(message, tabla, parse_mode="Markdown")
 
 @bot.message_handler(commands=["pronostico", "valor"])
 async def handle_pronostico(message):
@@ -123,17 +143,15 @@ async def handle_pronostico(message):
     id_l, id_v = MAPEO_EQUIPOS.get(q_l), MAPEO_EQUIPOS.get(q_v)
 
     if not id_l or not id_v:
-        await bot.reply_to(message, "❌ Equipo no reconocido en La Liga.")
+        await bot.reply_to(message, "❌ Equipo no reconocido. Usa `/equipos` para ver la lista.", parse_mode="Markdown")
         return
 
     n_l, n_v = ID_A_NOMBRE[id_l], ID_A_NOMBRE[id_v]
     espera = await bot.reply_to(message, f"📡 Procesando {n_l} vs {n_v}...")
 
-    # Simulación de datos (Integra aquí tus funciones de API Football/JSON si las tienes)
     prob_l, c_l, edge, stake, h2h = 0.55, 2.10, 0.08, 2.5, "2-1-0"
     xg_l, xg_v = 1.85, 1.10
 
-    # Dataset estructurado para evitar alucinaciones
     dataset = (
         f"--- DATASET ---\n"
         f"[POISSON]: {porcentaje(prob_l)}\n"
@@ -159,7 +177,7 @@ async def config_cmd(message):
     await bot.reply_to(message, "⚙️ Panel de Configuración de IA:", reply_markup=mk)
 
 # ==================================================
-# LÓGICA DE CALLBACKS (CONFIGURACIÓN)
+# LÓGICA DE CALLBACKS
 # ==================================================
 @bot.callback_query_handler(func=lambda c: c.data.startswith("set_rol_"))
 async def cb_role(call):
@@ -189,18 +207,18 @@ async def cb_save(call):
     if rol == "estratega":
         mk.add(InlineKeyboardButton("🛡 Configurar Auditor", callback_data="set_rol_auditor"))
     mk.add(InlineKeyboardButton("🏁 Finalizar", callback_data="config_fin"))
-    await bot.edit_message_text(f"✅ {rol.upper()} configurado con {lista[int(idx)]}", call.message.chat.id, call.message.message_id, reply_markup=mk)
+    await bot.edit_message_text(f"✅ {rol.upper()} configurado.", call.message.chat.id, call.message.message_id, reply_markup=mk)
 
 @bot.callback_query_handler(func=lambda c: c.data == "config_fin")
 async def cb_fin(call):
-    await bot.edit_message_text("🚀 Configuración completa. Sistema listo para analizar.", call.message.chat.id, call.message.message_id)
+    await bot.edit_message_text("🚀 Configuración completa.", call.message.chat.id, call.message.message_id)
 
 # ==================================================
 # INICIO
 # ==================================================
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
-    logging.info("Bot Analista V5.7 iniciado correctamente.")
+    logging.info("Bot Analista V5.7.1 iniciado.")
     await bot.polling(non_stop=True)
 
 if __name__ == "__main__":
