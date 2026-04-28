@@ -2,14 +2,12 @@ name: Actualizar Datos de Liga
 
 on:
   schedule:
-    # Se ejecuta a las 09:00 UTC (Aprox 3:00 AM en Juárez/CDMX)
     - cron: '0 9 * * *'
-  workflow_dispatch: # Permite ejecutarlo manualmente desde GitHub si quieres
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout del repositorio
       uses: actions/checkout@v3
@@ -20,11 +18,11 @@ jobs:
         python-version: '3.9'
 
     - name: Instalar dependencias
-      run: |
-        pip install requests
+      run: pip install requests
 
     - name: Ejecutar script de actualización
       env:
+        # Usamos el nombre que tienes en tu imagen de GitHub Secrets
         API_KEY_FOOTBALL: ${{ secrets.FOOTBALL_DATA_API_KEY }}
       run: python update_league_data.py
 
@@ -33,5 +31,4 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git add liga_data.json
-        git diff --quiet && git diff --staged --quiet || git commit -m "Actualización diaria de liga_data.json"
-        git push
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Actualización diaria de liga_data.json" && git push)
