@@ -70,7 +70,7 @@ SISTEMA_IA = {
     ]
 }
 
-# --- Motores de IA ---
+# --- Motores de IA (Prompts Optimizados) ---
 async def ejecutar_ia(rol, prompt):
     config = SISTEMA_IA[rol]
     if not config["nodo"]: return None
@@ -89,19 +89,22 @@ async def ejecutar_ia(rol, prompt):
 
     instrucciones = {
         "estratega": (
-            "Eres un experto en Value Betting. Analiza: 1) Probabilidad Poisson vs Cuota Real (implícita). "
-            "2) Tendencia H2H del CSV. Tu objetivo es emitir una PREDICCIÓN FINAL. "
-            "Formato obligatorio (máximo 100 palabras):\n"
-            "• ANÁLISIS: ¿La cuota paga más de lo que el modelo sugiere? ¿El H2H confirma la superioridad?\n"
-            "• MERCADO RELEVANTE: Indica la cuota analizada y su valor.\n"
-            "• PREDICCIÓN: Pronóstico directo (1X2) y justificación breve.\n"
-            "Sé agresivo detectando valor."
+            "Eres un experto en Value Betting y modelos estadísticos. "
+            "Analiza: 1) Probabilidad Poisson vs Cuota Real. 2) Tendencia H2H del CSV. "
+            "Tu objetivo es identificar si existe una ventaja matemática real (Edge).\n\n"
+            "REGLAS:\n"
+            "- Si el Edge es > 2%, busca confirmación en el H2H para el PICK.\n"
+            "- Si el Edge es negativo, el PICK debe ser NO APOSTAR.\n\n"
+            "FORMATO OBLIGATORIO (Máx 100 palabras):\n"
+            "• ANÁLISIS: Justificación técnica breve.\n"
+            "• MERCADO RELEVANTE: Cuota analizada y su valor.\n"
+            "• PREDICCIÓN: Pronóstico directo (1X2) o NO APOSTAR."
         ),
         "auditor": (
-            "Eres un Auditor de Riesgos. Prohibido saludar. "
+            "Eres un Auditor de Riesgos Matemáticos. PROHIBIDO SALUDAR.\n\n"
             "Valida: Si el Edge es > 0 y el H2H es favorable, aprueba el Stake. "
-            "Si el Edge es negativo, confirma que el Stake 0% es la única acción lógica. "
-            "Reporta incongruencias matemáticas entre el análisis del estratega y los datos duros. "
+            "Si el Edge es negativo y el estratega sugiere apostar, reporta 'INCONGRUENCIA MATEMÁTICA'. "
+            "Confirma que el Stake 0% es la única acción lógica ante falta de valor.\n\n"
             "Máximo 50 palabras."
         )
     }
@@ -234,12 +237,14 @@ async def handle_pronostico(message):
         kelly = ((c_l * ph) - 1) / (c_l - 1) if edge > 0 else 0
         stake = round(max(0, min(kelly * 0.25 * 100, 5.0)), 2)
         nivel = "DIAMANTE 💎" if edge > 0.05 else "ORO 🥇" if edge > 0.02 else "PLATA 🥈" if edge > 0 else "SIN VALOR ⚠️"
+        
         asyncio.create_task(guardar_en_github(nuevo_registro={
             "fecha": (datetime.utcnow() + timedelta(hours=OFFSET_JUAREZ)).strftime('%Y-%m-%d %H:%M'),
             "partido": f"{m_l} vs {m_v}", "pick": m_l if edge > 0 else "No Bet",
             "poisson": f"{ph*100:.1f}%", "cuota": c_l, "edge": f"{edge*100:.1f}%",
             "stake": f"{stake}%", "nivel": nivel, "status": "⏳ PENDIENTE"
         }))
+        
         header = f"🛠 REPORTE: {'✅' if check_odds else '❌'} Cuotas | ✅ Poisson ({ph*100:.1f}%) | {'✅' if check_h2h else '❌'} H2H (CSV)\n{'—'*20}\n"
         prompt_e = (
             f"Analiza el partido {m_l} vs {m_v}.\n"
