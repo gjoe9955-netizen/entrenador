@@ -12,7 +12,7 @@ HEADERS = {"X-Auth-Token": API_KEY}
 
 def train_spain():
     if not API_KEY:
-        print("❌ ERROR: No se encontró la API KEY.")
+        print("❌ ERROR: No se encontró la API KEY. Verifica tus Secrets en GitHub.")
         return
 
     try:
@@ -27,7 +27,7 @@ def train_spain():
         matches = data.get('matches', [])
         
         if not matches:
-            print("⚠️ No hay partidos terminados.")
+            print("⚠️ No hay partidos terminados disponibles.")
             return
 
         goles = []
@@ -36,7 +36,7 @@ def train_spain():
                 goles.append({
                     'home': m['homeTeam']['name'],
                     'away': m['awayTeam']['name'],
-                    'goals_h': m['score']['fullTime']['home'],
+                    'goals_h': m['score']['fullTime']['home'],\
                     'goals_a': m['score']['fullTime']['away'],
                     'date': m['utcDate']
                 })
@@ -44,18 +44,14 @@ def train_spain():
         df = pd.DataFrame(goles)
         df['date'] = pd.to_datetime(df['date'])
         
-        # --- LÓGICA DE TIME-DECAY ---
-        # Calculamos los días de diferencia respecto al partido más reciente
+        # Aplicar Time-Decay (dar más peso a lo más reciente)
         max_date = df['date'].max()
-        df['days_diff'] = (max_date - df['date']).dt.days
-        
-        # Aplicamos factor de decaimiento (0.997 es un estándar para ligas europeas)
-        df['weight'] = 0.997 ** df['days_diff']
-        
-        # Promedios ponderados de la liga
+        df['days_since'] = (max_date - df['date']).dt.days
+        df['weight'] = np.exp(-0.005 * df['days_since'])
+
         avg_h = np.average(df['goals_h'], weights=df['weight'])
         avg_a = np.average(df['goals_a'], weights=df['weight'])
-        
+
         teams_stats = {}
         teams = pd.unique(df[['home', 'away']].values.ravel())
         
@@ -63,40 +59,31 @@ def train_spain():
             h_df = df[df['home'] == team]
             a_df = df[df['away'] == team]
             
-            # Ataque y Defensa Local con pesos
-            if not h_df.empty:
-                att_h = np.average(h_df['goals_h'], weights=h_df['weight']) / avg_h
-                def_h = np.average(h_df['goals_a'], weights=h_df['weight']) / avg_a
-            else:
-                att_h, def_h = 1.0, 1.0
-                
-            # Ataque y Defensa Visitante con pesos
-            if not a_df.empty:
-                att_a = np.average(a_df['goals_a'], weights=a_df['weight']) / avg_a
-                def_a = np.average(a_df['goals_h'], weights=a_df['weight']) / avg_h
-            else:
-                att_a, def_a = 1.0, 1.0
+            att_h = np.average(h_df['goals_h'], weights=h_df['weight']) / avg_h if not h_df.empty else 1.0
+            def_h = np.average(h_df['goals_a'], weights=h_df['weight']) / avg_a if not h_df.empty else 1.0
+            att_a = np.average(a_df['goals_a'], weights=a_df['weight']) / avg_a if not a_df.empty else 1.0
+            def_a = np.average(a_df['goals_h'], weights=a_df['weight']) / avg_h if not a_df.empty else 1.0
 
             teams_stats[team] = {
-                "att_h": float(att_h),
-                "def_h": float(def_h),
-                "att_a": float(att_a),
-                "def_a": float(def_a)
+                "att_h": float(att_h), "def_h": float(def_h),
+                "att_a": float(att_a), "def_a": float(def_a)
             }
 
         output = {
             "LaLiga": {
                 "averages": {"league_home": float(avg_h), "league_away": float(avg_a)},
                 "teams": teams_stats
-            }
+            },
+            "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
 
-        with open('modelo_poisson.json', 'w') as f:
-            json.dump(output, f, indent=4)
-        print(f"✅ Modelo actualizado con éxito. Partidos procesados: {len(df)}")
+        with open('modelo_poisson.json', 'w', encoding='utf-8') as f:
+            json.dump(output, f, indent=4, ensure_ascii=False)
+        
+        print(f"✅ modelo_poisson.json actualizado con éxito. Equipos: {len(teams_stats)}")
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Error crítico: {e}")
 
 if __name__ == "__main__":
     train_spain()
