@@ -47,37 +47,52 @@ bot = AsyncTeleBot(TOKEN)
 # MAPEO EQUIPOS
 # ==================================================
 
+# ==================================================
+# MAPEO EQUIPOS (ACTUALIZADO SEGÚN TEST DE API)
+# ==================================================
+
 MAPEO_EQUIPOS = {
-    "Girona FC": "Girona",
-    "Rayo Vallecano de Madrid": "Vallecano",
-    "Villarreal CF": "Villarreal",
-    "Real Oviedo": "Oviedo",
-    "RCD Mallorca": "Mallorca",
-    "FC Barcelona": "Barcelona",
-    "Deportivo Alavés": "Alaves",
-    "Levante UD": "Levante",
-    "Valencia CF": "Valencia",
-    "Real Sociedad de Fútbol": "Sociedad",
-    "RC Celta de Vigo": "Celta",
-    "Getafe CF": "Getafe",
-    "Athletic Club": "Ath Bilbao",
-    "Sevilla FC": "Sevilla",
-    "RCD Espanyol de Barcelona": "Espanol",
-    "Club Atlético de Madrid": "Ath Madrid",
-    "Elche CF": "Elche",
-    "Real Betis Balompié": "Betis",
-    "Real Madrid CF": "Real Madrid",
-    "CA Osasuna": "Osasuna",
-    "Atlético Madrid": "Ath Madrid",
-    "Barcelona": "Barcelona",
-    "Mallorca": "Mallorca",
-    "Girona": "Girona",
-    "Betis": "Betis",
+    # Nombres exactos de la API (shortName) -> Mapeo funcional
+    "Athletic": "Athletic",
+    "Atleti": "Atleti",
     "Osasuna": "Osasuna",
-    "Valencia": "Valencia",
-    "Sevilla": "Sevilla",
+    "Espanyol": "Espanyol",
+    "Barça": "Barça",
     "Getafe": "Getafe",
-    "Celta": "Celta"
+    "Real Madrid": "Real Madrid",
+    "Rayo Vallecano": "Rayo Vallecano",
+    "Levante": "Levante",
+    "Mallorca": "Mallorca",
+    "Real Betis": "Real Betis",
+    "Real Sociedad": "Real Sociedad",
+    "Villarreal": "Villarreal",
+    "Valencia": "Valencia",
+    "Alavés": "Alavés",
+    "Elche": "Elche",
+    "Girona": "Girona",
+    "Celta": "Celta",
+    "Sevilla FC": "Sevilla FC",
+    "Real Oviedo": "Real Oviedo",
+
+    # Alias comunes para que el bot te entienda mejor a ti
+    "athletic club": "Athletic",
+    "bilbao": "Athletic",
+    "atletico": "Atleti",
+    "atletico madrid": "Atleti",
+    "ath madrid": "Atleti",
+    "barcelona": "Barça",
+    "barca": "Barça",
+    "fc barcelona": "Barça",
+    "betis": "Real Betis",
+    "sociedad": "Real Sociedad",
+    "la real": "Real Sociedad",
+    "vallecano": "Rayo Vallecano",
+    "rayo": "Rayo Vallecano",
+    "alaves": "Alavés",
+    "sevilla": "Sevilla FC",
+    "espanyol": "Espanyol",
+    "espanol": "Espanyol",
+    "oviedo": "Real Oviedo"
 }
 
 # ==================================================
