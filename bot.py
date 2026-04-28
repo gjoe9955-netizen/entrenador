@@ -87,13 +87,42 @@ async def ejecutar_ia(rol, prompt):
     api_key = s_key if config["api"] == 'SAMBA' else g_key
     base_url = "https://api.sambanova.ai/v1" if config["api"] == 'SAMBA' else "https://api.groq.com/openai/v1"
 
+    # ===== PROMPTS MEJORADOS (ÚNICO CAMBIO) =====
     instrucciones = {
         "estratega": (
-            "Eres un experto en Value Betting. Analiza Poisson vs Cuota y H2H.\n"
-            "FORMATO: • ANÁLISIS, • MERCADO RELEVANTE, • PREDICCIÓN."
+            "Eres analista profesional de apuestas deportivas especializado en value betting.\n"
+            "Tu función es detectar ventaja matemática real entre modelo y mercado.\n\n"
+            "Usa únicamente:\n"
+            "- Probabilidad Poisson\n"
+            "- Probabilidad final ajustada\n"
+            "- Cuotas actuales\n"
+            "- Historial H2H entregado\n"
+            "- Stake Kelly\n\n"
+            "Evalúa:\n"
+            "1. Si existe value real.\n"
+            "2. Riesgo del pick.\n"
+            "3. Si la cuota está inflada o correcta.\n"
+            "4. Mejor opción disponible.\n\n"
+            "Si edge < 1.5%, recomienda NO BET.\n"
+            "Nunca inventes datos.\n"
+            "Sé técnico, frío y directo.\n\n"
+            "RESPONDE EXACTAMENTE:\n"
+            "• ANÁLISIS:\n"
+            "máximo 2 líneas.\n\n"
+            "• MERCADO:\n"
+            "valor o no valor.\n\n"
+            "• PREDICCIÓN:\n"
+            "Pick final + confianza (Alta/Media/Baja)."
         ),
-        "auditor": "Eres un Auditor de Riesgos. Valida si el Edge justifica el Stake. Máximo 40 palabras."
+        "auditor": (
+            "Eres gestor profesional de riesgo y bankroll.\n"
+            "Evalúa si el stake Kelly sugerido es prudente.\n"
+            "Responde SOLO una línea:\n"
+            "RIESGO: Bajo / Medio / Alto + motivo técnico.\n"
+            "Máximo 20 palabras."
+        )
     }
+    # ===========================================
 
     try:
         client = OpenAI(api_key=api_key, base_url=base_url)
@@ -222,230 +251,3 @@ async def obtener_h2h_directo(equipo_l, equipo_v):
 
     except:
         return "CSV N/A", False
-
-# --- HELP ---
-@bot.message_handler(commands=['help', 'start'])
-async def cmd_help(message):
-    txt = (
-        "🤖 **COMANDOS DISPONIBLES**\n\n"
-        "📊 `/pronostico Local vs Visitante`\n"
-        "Analiza partido con Poisson + Odds + Kelly.\n\n"
-        "💰 `/valor Local vs Visitante`\n"
-        "Alias de /pronostico.\n\n"
-        "📁 `/historial`\n"
-        "Muestra últimos pronósticos guardados.\n\n"
-        "⚙️ `/config`\n"
-        "Configura IA Estratega y Auditor.\n\n"
-        "❓ `/help`\n"
-        "Muestra esta ayuda.\n\n"
-        "🧪 **Ejemplo:**\n"
-        "`/pronostico Real Madrid vs Barcelona`"
-    )
-    await bot.reply_to(message, txt, parse_mode='Markdown')
-
-# --- Comandos Principales ---
-@bot.message_handler(commands=['pronostico', 'valor'])
-async def handle_pronostico(message):
-    if not SISTEMA_IA["estratega"]["nodo"]:
-        await bot.reply_to(message, "🚨 Configura con `/config`.")
-        return
-
-    parts = message.text.split(maxsplit=1)
-
-    if len(parts) < 2 or " vs " not in parts[1].lower():
-        await bot.reply_to(message, "⚠️ `/pronostico Local vs Visitante`.")
-        return
-
-    l_q, v_q = [t.strip() for t in parts[1].lower().split(" vs ")]
-    msg_espera = await bot.reply_to(message, "📡 Analizando mercado...")
-
-    try:
-        res_json = await asyncio.to_thread(requests.get, URL_JSON, timeout=10)
-        raw_json = res_json.json()
-        liga = next(iter(raw_json))
-
-        m_l = next((t for t in raw_json[liga]['teams'] if l_q in t.lower() or t.lower() in l_q), None)
-        m_v = next((t for t in raw_json[liga]['teams'] if v_q in t.lower() or t.lower() in v_q), None)
-
-        if not m_l or not m_v:
-            await bot.edit_message_text("❌ Equipos no hallados en el modelo.", message.chat.id, msg_espera.message_id)
-            return
-
-        c_l, c_e, c_v, check_odds = await obtener_datos_mercado(m_l)
-        h2h_str, check_h2h = await obtener_h2h_directo(m_l, m_v)
-
-        l_s = raw_json[liga]['teams'][m_l]
-        v_s = raw_json[liga]['teams'][m_v]
-        avg = raw_json[liga]['averages']
-
-        mu_l = l_s['att_h'] * v_s['def_a'] * avg['league_home']
-        mu_v = v_s['att_a'] * l_s['def_h'] * avg['league_away']
-
-        ph = sum(
-            poisson.pmf(x, mu_l) * poisson.pmf(y, mu_v)
-            for x in range(7)
-            for y in range(7)
-            if x > y
-        )
-
-        prob_mercado = 1 / c_l
-        prob_final = (ph * 0.70) + (prob_mercado * 0.30)
-
-        edge = prob_final - prob_mercado
-
-        b = c_l - 1
-        q = 1 - prob_final
-        kelly = ((b * prob_final) - q) / b if b > 0 else 0
-        stake = round(max(0, kelly * 0.25) * 100, 2)
-
-        nivel = (
-            "DIAMANTE 💎" if edge > 0.05 else
-            "ORO 🥇" if edge > 0.02 else
-            "PLATA 🥈" if edge > 0 else
-            "SIN VALOR ⚠️"
-        )
-
-        await guardar_en_github(
-            nuevo_registro={
-                "fecha": (datetime.now(timezone.utc) + timedelta(hours=OFFSET_JUAREZ)).strftime('%Y-%m-%d %H:%M'),
-                "partido": f"{m_l} vs {m_v}",
-                "pick": m_l if edge > 0 else "No Bet",
-                "poisson": f"{ph*100:.1f}%",
-                "cuota": c_l,
-                "edge": f"{edge*100:.1f}%",
-                "stake": f"{stake}%",
-                "nivel": nivel,
-                "status": "⏳ PENDIENTE"
-            }
-        )
-
-        header = f"🛠 REPORTE: {'✅' if check_odds else '❌'} Cuotas | ✅ Poisson | {'✅' if check_h2h else '❌'} H2H\n{'—'*20}\n"
-
-        analisis = await ejecutar_ia(
-            "estratega",
-            f"Analiza {m_l} vs {m_v}.\n"
-            f"Poisson: {ph*100:.1f}%\n"
-            f"Prob Final: {prob_final*100:.1f}%\n"
-            f"Cuotas: {c_l}, {c_e}, {c_v}\n"
-            f"H2H: {h2h_str}\n"
-            f"Stake Kelly: {stake}%"
-        )
-
-        res_final = f"{header}{analisis}\n\n🛰 **ESTRATEGA:** `{SISTEMA_IA['estratega']['api']}`"
-
-        if SISTEMA_IA["auditor"]["nodo"]:
-            auditoria = await ejecutar_ia(
-                "auditor",
-                f"Edge {edge*100:.1f}% | Stake: {stake}% | Pick: {m_l}"
-            )
-            res_final += f"\n\n🛡 **AUDITOR:**\n{auditoria}"
-
-        await bot.edit_message_text(
-            res_final,
-            message.chat.id,
-            msg_espera.message_id,
-            parse_mode='Markdown'
-        )
-
-    except Exception as e:
-        await bot.edit_message_text(f"❌ Error Crítico: {e}", message.chat.id, msg_espera.message_id)
-
-@bot.message_handler(commands=['historial'])
-async def cmd_historial(message):
-    try:
-        r = requests.get(f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/{FILE_PATH}").json()
-
-        if not r:
-            await bot.reply_to(message, "📭 Historial vacío.")
-            return
-
-        txt = "📊 **ÚLTIMOS PRONÓSTICOS**\n\n"
-
-        for i in r[-8:]:
-            status = i.get('status', '⏳ PENDIENTE')
-            icon = "✅" if "WIN" in status else "❌" if "LOSS" in status else "⏳"
-
-            txt += f"{icon} **{i['partido']}**\n🎯 `{i['pick']}` | 💰 Edge: `{i['edge']}` | Stake: `{i['stake']}`\n{'—'*15}\n"
-
-        await bot.reply_to(message, txt, parse_mode='Markdown')
-
-    except:
-        await bot.reply_to(message, "❌ Error al conectar con GitHub.")
-
-@bot.message_handler(commands=['config'])
-async def cmd_config(message):
-    markup = InlineKeyboardMarkup().add(
-        InlineKeyboardButton("🧠 CONFIG ESTRATEGA", callback_data="set_rol_estratega")
-    )
-    await bot.reply_to(message, "🛠 **AJUSTES DE RED IA**", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('set_rol_'))
-async def cb_rol(call):
-    rol = call.data.split('_')[-1]
-
-    markup = InlineKeyboardMarkup().row(
-        InlineKeyboardButton("SambaNova", callback_data=f"set_api_{rol}_SAMBA"),
-        InlineKeyboardButton("Groq", callback_data=f"set_api_{rol}_GROQ")
-    )
-
-    await bot.edit_message_text(
-        f"Selecciona API para {rol.upper()}:",
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=markup
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('set_api_'))
-async def cb_api(call):
-    _, _, rol, api = call.data.split('_')
-
-    nodos = SISTEMA_IA["nodos_samba"] if api == 'SAMBA' else SISTEMA_IA["nodos_groq"]
-
-    markup = InlineKeyboardMarkup()
-
-    for idx, n in enumerate(nodos):
-        markup.add(InlineKeyboardButton(n, callback_data=f"sv_n_{rol}_{api}_{idx}"))
-
-    await bot.edit_message_text(
-        f"Selecciona Nodo {api}:",
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=markup
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('sv_n_'))
-async def cb_save(call):
-    _, _, rol, api, idx = call.data.split('_')
-
-    lista = SISTEMA_IA["nodos_samba"] if api == 'SAMBA' else SISTEMA_IA["nodos_groq"]
-    SISTEMA_IA[rol] = {"api": api, "nodo": lista[int(idx)]}
-
-    markup = InlineKeyboardMarkup()
-
-    if rol == "estratega":
-        markup.add(InlineKeyboardButton("🛡 AÑADIR AUDITOR", callback_data="set_rol_auditor"))
-
-    markup.add(InlineKeyboardButton("🏁 FINALIZAR", callback_data="config_fin"))
-
-    await bot.edit_message_text(
-        f"✅ {rol.upper()} listo.",
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=markup
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data == "config_fin")
-async def cb_fin(call):
-    await bot.edit_message_text(
-        "🚀 **MODELO OPERATIVO**",
-        call.message.chat.id,
-        call.message.message_id
-    )
-
-async def main():
-    await bot.delete_webhook(drop_pending_updates=True)
-    logging.info("Bot encendido...")
-    await bot.polling(non_stop=True)
-
-if __name__ == "__main__":
-    asyncio.run(main())
