@@ -47,12 +47,7 @@ bot = AsyncTeleBot(TOKEN)
 # MAPEO EQUIPOS
 # ==================================================
 
-# ==================================================
-# MAPEO EQUIPOS (ACTUALIZADO SEGÚN TEST DE API)
-# ==================================================
-
 MAPEO_EQUIPOS = {
-    # Nombres exactos de la API (shortName) -> Mapeo funcional
     "Athletic": "Athletic",
     "Atleti": "Atleti",
     "Osasuna": "Osasuna",
@@ -74,7 +69,6 @@ MAPEO_EQUIPOS = {
     "Sevilla FC": "Sevilla FC",
     "Real Oviedo": "Real Oviedo",
 
-    # Alias comunes para que el bot te entienda mejor a ti
     "athletic club": "Athletic",
     "bilbao": "Athletic",
     "atletico": "Atleti",
@@ -146,20 +140,65 @@ def porcentaje(x):
     return f"{x*100:.2f}%"
 
 # ==================================================
-# FOOTBALL-DATA API ENGINE
+# FOOTBALL-DATA ENGINE (INTEGRACIÓN LOCAL JSON)
 # ==================================================
 
 async def obtener_datos_football_data(q_local, q_visita):
+    # Intentar cargar datos desde el JSON local generado por GitHub Actions
+    datos_locales = None
+    if os.path.exists("liga_data.json"):
+        try:
+            with open("liga_data.json", "r", encoding="utf-8") as f:
+                datos_locales = json.load(f)
+            logging.info("Utilizando datos locales de liga_data.json")
+        except Exception as e:
+            logging.error(f"Error al leer liga_data.json: {e}")
+
+    if datos_locales:
+        try:
+            id_l, id_v = None, None
+            stats = {"l": {"att": 1.2, "def": 1.0}, "v": {"att": 1.0, "def": 1.2}}
+            
+            for team in datos_locales.get("standings", []):
+                name_api = team["team"]["shortName"]
+                if q_local.lower() in name_api.lower() or name_api.lower() in q_local.lower():
+                    id_l = team["team"]["id"]
+                    stats["l"]["att"] = team["goalsFor"] / team["playedGames"] if team["playedGames"] > 0 else 1.2
+                    stats["l"]["def"] = team["goalsAgainst"] / team["playedGames"] if team["playedGames"] > 0 else 1.0
+                if q_visita.lower() in name_api.lower() or name_api.lower() in q_visita.lower():
+                    id_v = team["team"]["id"]
+                    stats["v"]["att"] = team["goalsFor"] / team["playedGames"] if team["playedGames"] > 0 else 1.0
+                    stats["v"]["def"] = team["goalsAgainst"] / team["playedGames"] if team["playedGames"] > 0 else 1.2
+
+            if id_l and id_v:
+                gl, gv, emp = 0, 0, 0
+                for m in datos_locales.get("matches", []):
+                    if m["status"] == "FINISHED":
+                        h_id = m["homeTeam"]["id"]
+                        a_id = m["awayTeam"]["id"]
+                        if (h_id == id_l and a_id == id_v) or (h_id == id_v and a_id == id_l):
+                            if m["score"]["winner"] == "DRAW": emp += 1
+                            elif m["score"]["winner"] == "HOME_TEAM":
+                                if h_id == id_l: gl += 1
+                                else: gv += 1
+                            elif m["score"]["winner"] == "AWAY_TEAM":
+                                if a_id == id_l: gl += 1
+                                else: gv += 1
+
+                h2h_txt = f"{q_local} {gl} | Emp {emp} | {q_visita} {gv} (JSON)"
+                return h2h_txt, stats["l"]["att"], stats["l"]["def"], stats["v"]["att"], stats["v"]["def"], True
+        except Exception as e:
+            logging.error(f"Error procesando JSON local: {e}")
+
+    # BACKUP: API EXTERNA SI EL JSON FALLA O NO EXISTE
+    logging.info("JSON no disponible, consultando API externa...")
     headers = {'X-Auth-Token': FOOTBALL_DATA_KEY}
     base_url = "https://api.football-data.org/v4"
-    
     try:
         url_pd = f"{base_url}/competitions/PD/standings"
         res_pd = requests.get(url_pd, headers=headers, timeout=10).json()
-        
         id_l, id_v = None, None
         stats = {"l": {"att": 1.2, "def": 1.0}, "v": {"att": 1.0, "def": 1.2}}
-        
         if "standings" in res_pd:
             tabla = res_pd["standings"][0]["table"]
             for team in tabla:
@@ -172,15 +211,11 @@ async def obtener_datos_football_data(q_local, q_visita):
                     id_v = team["team"]["id"]
                     stats["v"]["att"] = team["goalsFor"] / team["playedGames"]
                     stats["v"]["def"] = team["goalsAgainst"] / team["playedGames"]
-
         if not id_l or not id_v:
             return "Equipos no identificados", 1.2, 1.0, 1.0, 1.2, False
-
         await asyncio.sleep(1.2) 
-
         url_h2h = f"{base_url}/matches?teams={id_l},{id_v}&status=FINISHED"
         res_h2h = requests.get(url_h2h, headers=headers, timeout=10).json()
-        
         gl, gv, emp = 0, 0, 0
         if "matches" in res_h2h:
             for m in res_h2h["matches"][-5:]:
@@ -191,10 +226,7 @@ async def obtener_datos_football_data(q_local, q_visita):
                 else:
                     if m["score"]["winner"] == "HOME_TEAM": gv += 1
                     else: gl += 1
-        
-        h2h_txt = f"{q_local} {gl} | Emp {emp} | {q_visita} {gv}"
-        return h2h_txt, stats["l"]["att"], stats["l"]["def"], stats["v"]["att"], stats["v"]["def"], True
-
+        return f"{q_local} {gl} | Emp {emp} | {q_visita} {gv} (API)", stats["l"]["att"], stats["l"]["def"], stats["v"]["att"], stats["v"]["def"], True
     except Exception as e:
         logging.error(f"Error FD API: {e}")
         return "Error API", 1.2, 1.0, 1.0, 1.2, False
@@ -212,50 +244,8 @@ async def ejecutar_ia(rol, prompt):
     base_url = "https://api.sambanova.ai/v1" if cfg["api"] == "SAMBA" else "https://api.groq.com/openai/v1"
 
     prompts = {
-        "estratega":
-        """
-Eres trader profesional de apuestas deportivas.
-
-Debes analizar exclusivamente:
-
-1. Probabilidad Poisson
-2. H2H reciente
-3. Cuotas mercado
-4. Probabilidad implícita
-5. Edge real
-6. Stake Kelly
-
-Objetivo:
-Encontrar VALUE BETTING REAL.
-
-Reglas:
-- Si edge <= 0 = NO BET
-- Si edge 0 a 2% = Value bajo
-- Si edge 2% a 5% = Apuesta moderada
-- Si edge > 5% = Fuerte value
-
-Formato:
-ANALISIS:
-MERCADO:
-DECISION FINAL:
-""",
-
-        "auditor":
-        """
-Eres auditor profesional bankroll.
-
-Debes destruir picks débiles.
-Evalúa:
-
-- riesgo stake
-- edge bajo
-- sobrevaloración mercado
-- falsa confianza modelo
-
-Formato:
-RIESGO:
-VEREDICTO:
-"""
+        "estratega": """Eres trader profesional de apuestas deportivas. Analiza: 1. Poisson 2. H2H 3. Cuotas 4. Prob. Implícita 5. Edge 6. Kelly. Formato: ANALISIS: MERCADO: DECISION FINAL:""",
+        "auditor": """Eres auditor profesional bankroll. Destruye picks débiles. Evalúa riesgo y veredicto."""
     }
 
     try:
@@ -320,114 +310,54 @@ async def handle_pronostico(message):
     if not SISTEMA_IA["estratega"]["nodo"]:
         await bot.reply_to(message, "🚨 Usa /config primero.")
         return
-
     partes = message.text.split(maxsplit=1)
     if len(partes) < 2 or " vs " not in partes[1].lower():
         await bot.reply_to(message, "Uso: /pronostico Local vs Visitante")
         return
-
     q_local, q_visita = partes[1].split(" vs ")
     espera = await bot.reply_to(message, "📡 Analizando mercado profesional...")
-
     try:
         h2h_txt, att_l, def_l, att_v, def_v, ok_api = await obtener_datos_football_data(q_local, q_visita)
-        
-        mu_l = att_l * def_v
-        mu_v = att_v * def_l
-
+        mu_l, mu_v = att_l * def_v, att_v * def_l
         ph = sum(poisson.pmf(x, mu_l) * poisson.pmf(y, mu_v) for x in range(7) for y in range(7) if x > y)
-
         cuota_l, cuota_e, cuota_v, ok_odds = await obtener_datos_mercado()
         p_imp = 1 / cuota_l
         edge = ph - p_imp
         kelly = ((cuota_l * ph) - 1) / (cuota_l - 1) if edge > 0 else 0
         stake = round(max(0, min(kelly * 0.25 * 100, 5)), 2)
-
         checks = f"{'✅' if ok_odds else '❌'} Odds  ✅ Poisson  {'✅' if ok_api else '❌'} H2H"
-
         if edge <= 0: verdict = "❌ NO BET"
         elif edge < 0.02: verdict = "⚠️ VALUE BAJO"
         elif edge < 0.05: verdict = "✅ APUESTA MODERADA"
         else: verdict = "🔥 VALUE FUERTE"
-
-        prompt = f"""
-Partido: {q_local} vs {q_visita}
-
-Poisson Home Win: {porcentaje(ph)}
-Cuota Local: {cuota_l}
-Probabilidad Implícita: {porcentaje(p_imp)}
-Edge: {porcentaje(edge)}
-Stake Kelly: {stake}%
-H2H: {h2h_txt}
-"""
-
+        prompt = f"Partido: {q_local} vs {q_visita}\nPoisson: {porcentaje(ph)}\nCuota: {cuota_l}\nEdge: {porcentaje(edge)}\nKelly: {stake}%\nH2H: {h2h_txt}"
         estratega = await ejecutar_ia("estratega", prompt)
         auditor = await ejecutar_ia("auditor", prompt) if SISTEMA_IA["auditor"]["nodo"] else "No configurado"
-
-        texto = (
-            f"📊 *{q_local} vs {q_visita}*\n\n"
-            f"{checks}\n\n"
-            f"⚽ Probabilidad Modelo: `{porcentaje(ph)}`\n"
-            f"💰 Cuota Mercado: `{cuota_l}`\n"
-            f"📉 Prob. Implícita: `{porcentaje(p_imp)}`\n"
-            f"📈 Edge: `{porcentaje(edge)}`\n"
-            f"🏦 Stake Kelly: `{stake}%`\n"
-            f"📚 H2H: `{h2h_txt}`\n\n"
-            f"🧠 *ESTRATEGA*\n{estratega}\n\n"
-            f"🛡 *AUDITOR*\n{auditor}\n\n"
-            f"🏁 *VEREDICTO FINAL*\n{verdict}"
-        )
-
+        texto = (f"📊 *{q_local} vs {q_visita}*\n\n{checks}\n\n⚽ Prob: `{porcentaje(ph)}` | 💰 Cuota: `{cuota_l}`\n📉 Imp: `{porcentaje(p_imp)}` | 📈 Edge: `{porcentaje(edge)}`\n🏦 Kelly: `{stake}%` | 📚 H2H: `{h2h_txt}`\n\n🧠 *ESTRATEGA*\n{estratega}\n\n🛡 *AUDITOR*\n{auditor}\n\n🏁 *VEREDICTO*\n{verdict}")
         await bot.edit_message_text(texto, message.chat.id, espera.message_id, parse_mode="Markdown")
-        
-        await guardar_en_github({
-            "fecha": (datetime.now(timezone.utc) + timedelta(hours=OFFSET_JUAREZ)).strftime("%Y-%m-%d %H:%M"),
-            "partido": f"{q_local} vs {q_visita}",
-            "edge": porcentaje(edge),
-            "stake": f"{stake}%",
-            "veredicto": verdict
-        })
-
+        await guardar_en_github({"fecha": (datetime.now(timezone.utc) + timedelta(hours=OFFSET_JUAREZ)).strftime("%Y-%m-%d %H:%M"), "partido": f"{q_local} vs {q_visita}", "edge": porcentaje(edge), "stake": f"{stake}%", "veredicto": verdict})
     except Exception as e:
         await bot.edit_message_text(f"❌ Error: {e}", message.chat.id, espera.message_id)
 
 @bot.message_handler(commands=["historial"])
 async def historial_cmd(message):
-    espera = await bot.reply_to(message, "📂 Recuperando registros de GitHub...")
+    espera = await bot.reply_to(message, "📂 Recuperando registros...")
     datos = await obtener_historial_github()
-    
     if not datos:
-        await bot.edit_message_text("📭 Historial vacío o no disponible.", message.chat.id, espera.message_id)
+        await bot.edit_message_text("📭 Historial vacío.", message.chat.id, espera.message_id)
         return
-
-    txt = "📋 *HISTORIAL DE ANÁLISIS RECIENTES*\n\n"
-    for d in datos[-10:]: # Mostrar últimos 10
+    txt = "📋 *HISTORIAL RECIENTE*\n\n"
+    for d in datos[-10:]:
         txt += f"📅 `{d['fecha']}`\n⚽ {d['partido']}\n📈 Edge: {d['edge']} | 🏦 Stake: {d['stake']}\n🏁 {d['veredicto']}\n\n"
-    
     await bot.edit_message_text(txt, message.chat.id, espera.message_id, parse_mode="Markdown")
 
 # ==================================================
-# COMANDOS DE CONFIGURACIÓN Y AYUDA
+# CONFIGURACIÓN Y AYUDA
 # ==================================================
 
 @bot.message_handler(commands=["help", "start"])
 async def help_cmd(message):
-    txt = (
-        "🤖 *BOT ANALISTA V5.5 FOOTBALL PRO FULL*\n"
-        "Sistema Profesional de Análisis Predictivo\n\n"
-        "📊 *COMANDOS*\n"
-        "• `/pronostico EquipoA vs EquipoB` : Realiza un análisis completo con IA y Poisson.\n"
-        "• `/valor EquipoA vs EquipoB` : Alias de pronóstico para buscar Value Bets.\n"
-        "• `/historial` : Muestra las últimas predicciones guardadas en el repositorio.\n"
-        "• `/config` : Configura los motores de IA (SambaNova/Groq) y nodos disponibles.\n\n"
-        "📈 *COMPONENTES DEL ANÁLISIS*\n"
-        "• *Poisson:* Probabilidad estadística basada en goles históricos.\n"
-        "• *H2H:* Resultados directos cara a cara (últimos 5 juegos).\n"
-        "• *Edge:* Ventaja porcentual calculada contra la cuota de mercado.\n"
-        "• *Kelly:* Stake sugerido mediante el criterio fraccionado (0.25).\n"
-        "• *Debate IA:* Interacción entre un Estratega y un Auditor de riesgo.\n\n"
-        "⚙️ *SOPORTE:* V5.5 Estable."
-    )
+    txt = ("🤖 *BOT ANALISTA V5.5*\n📊 `/pronostico Local vs Visita`\n📋 `/historial` | ⚙️ `/config`")
     await bot.reply_to(message, txt, parse_mode="Markdown")
 
 @bot.message_handler(commands=["config"])
