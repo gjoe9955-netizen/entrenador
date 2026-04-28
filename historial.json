@@ -1,16 +1,5 @@
 [
     {
-        "fecha": "2026-04-28 14:03",
-        "partido": "Girona FC vs RCD Mallorca",
-        "pick": "No Bet",
-        "poisson": "51.6%",
-        "cuota": 1.85,
-        "edge": "-2.5%",
-        "stake": "0%",
-        "nivel": "SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
-    },
-    {
         "fecha": "2026-04-28 14:02",
         "partido": "Villarreal CF vs Levante UD",
         "pick": "Villarreal CF",
@@ -19,6 +8,17 @@
         "edge": "14.8%",
         "stake": "5.0%",
         "nivel": "DIAMANTE 💎",
+        "status": "⏳ PENDIENTE"
+    },
+    {
+        "fecha": "2026-04-28 14:12",
+        "partido": "Girona FC vs RCD Mallorca",
+        "pick": "No Bet",
+        "poisson": "51.6%",
+        "cuota": 1.85,
+        "edge": "-2.5%",
+        "stake": "0%",
+        "nivel": "SIN VALOR ⚠️",
         "status": "⏳ PENDIENTE"
     }
 ]
