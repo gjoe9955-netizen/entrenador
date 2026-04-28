@@ -20,7 +20,6 @@ logging.basicConfig(level=logging.INFO)
 load_dotenv()
 
 TOKEN = os.getenv('TOKEN_TELEGRAM')
-# UNIFICACIÓN: Sincronizado con trainer.py y github actions
 FOOTBALL_DATA_KEY = os.getenv('API_KEY_FOOTBALL')
 ODDS_API_KEY = os.getenv('API_KEY_ODDS')
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
@@ -173,12 +172,13 @@ async def obtener_datos_mercado(equipo_l):
     except: pass
     return 1.85, 3.50, 4.00, False
 
-async def api_football_call(endpoint, base_global=False):
+async def api_football_call(params):
+    """Llamada optimizada: Usa filtros directos en la URL"""
     headers = {'X-Auth-Token': FOOTBALL_DATA_KEY}
-    url_base = "https://api.football-data.org/v4/"
-    path = f"matches?{endpoint}" if base_global else f"competitions/PD/{endpoint}"
+    # Forzamos la búsqueda en LaLiga (ID: 2014) para evitar vacíos
+    url = f"https://api.football-data.org/v4/matches?competitions=2014&{params}"
     try:
-        r = await asyncio.to_thread(requests.get, f"{url_base}{path}", headers=headers, timeout=10)
+        r = await asyncio.to_thread(requests.get, url, headers=headers, timeout=10)
         return r.json() if r.status_code == 200 else None
     except: return None
 
@@ -220,7 +220,6 @@ async def handle_pronostico(message):
     l_q, v_q = [t.strip() for t in parts[1].split(" vs ")]
     msg_espera = await bot.reply_to(message, "📡 Analizando probabilidades...")
     try:
-        # ROBUSTEZ: Intento cargar de GitHub, si falla usa el archivo local
         try:
             raw_json = requests.get(URL_JSON, timeout=10).json()
         except:
@@ -294,23 +293,25 @@ async def cmd_validar(message):
     msg = await bot.reply_to(message, "🔍 Validando resultados...")
     try:
         historial = requests.get(f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/{FILE_PATH}").json()
-        data_api = await api_football_call("matches?status=FINISHED")
+        # Buscamos partidos terminados de LaLiga
+        data_api = await api_football_call("status=FINISHED")
         actualizados = 0
-        for item in historial:
-            if item.get("status") == "⏳ PENDIENTE":
-                for m in data_api['matches']:
-                    h_api, a_api = m['homeTeam']['shortName'].lower(), m['awayTeam']['shortName'].lower()
-                    if h_api in item['partido'].lower() and a_api in item['partido'].lower():
-                        res = m['score']['winner']
-                        if item['pick'] == "No Bet": item['status'] = "➖ VOID"
-                        elif (res == 'HOME_TEAM' and h_api in item['pick'].lower()) or (res == 'AWAY_TEAM' and a_api in item['pick'].lower()):
-                            item['status'] = "✅ WIN"
-                        else: item['status'] = "❌ LOSS"
-                        actualizados += 1
+        if data_api and 'matches' in data_api:
+            for item in historial:
+                if item.get("status") == "⏳ PENDIENTE":
+                    for m in data_api['matches']:
+                        h_api, a_api = m['homeTeam']['shortName'].lower(), m['awayTeam']['shortName'].lower()
+                        if h_api in item['partido'].lower() and a_api in item['partido'].lower():
+                            res = m['score']['winner']
+                            if item['pick'] == "No Bet": item['status'] = "➖ VOID"
+                            elif (res == 'HOME_TEAM' and h_api in item['pick'].lower()) or (res == 'AWAY_TEAM' and a_api in item['pick'].lower()):
+                                item['status'] = "✅ WIN"
+                            else: item['status'] = "❌ LOSS"
+                            actualizados += 1
         if actualizados > 0:
             await guardar_en_github(historial_completo=historial)
             await bot.edit_message_text(f"✅ Se validaron {actualizados} picks.", message.chat.id, msg.message_id)
-        else: await bot.edit_message_text("ℹ️ Sin picks pendientes.", message.chat.id, msg.message_id)
+        else: await bot.edit_message_text("ℹ️ Sin picks pendientes terminados.", message.chat.id, msg.message_id)
     except: await bot.edit_message_text("❌ Error en validación.", message.chat.id, msg.message_id)
 
 @bot.message_handler(commands=['partidos'])
@@ -319,22 +320,16 @@ async def cmd_partidos(message):
     inicio = ahora.strftime('%Y-%m-%d')
     fin = (ahora + timedelta(days=7)).strftime('%Y-%m-%d')
     
-    # Consulta global de partidos para evitar filtros rígidos del tier gratuito
-    data = await api_football_call(f"dateFrom={inicio}&dateTo={fin}", base_global=True)
+    # Forzamos la consulta a LaLiga (ID 2014) con el rango de fechas
+    data = await api_football_call(f"dateFrom={inicio}&dateTo={fin}")
     
     if not data or not data.get('matches'):
-        await bot.reply_to(message, "📅 No hay partidos programados en los próximos 7 días.")
-        return
-
-    # Filtrar solo partidos de LaLiga (PD)
-    matches_laliga = [m for m in data['matches'] if m['competition']['code'] == 'PD']
-
-    if not matches_laliga:
-        await bot.reply_to(message, "📅 No encontré partidos de LaLiga esta semana.")
+        await bot.reply_to(message, f"📅 No hay partidos de LaLiga programados entre el {inicio} y el {fin}.")
         return
 
     txt = "📅 **LALIGA: PRÓXIMOS 7 DÍAS**\n\n"
-    for m in matches_laliga[:12]:
+    for m in data['matches'][:15]:
+        # Ajuste horario
         dt = datetime.strptime(m['utcDate'], "%Y-%m-%dT%H:%M:%SZ") + timedelta(hours=OFFSET_JUAREZ)
         txt += f"🕒 `{dt.strftime('%d/%m %H:%M')}` | **{m['homeTeam']['shortName']} vs {m['awayTeam']['shortName']}**\n"
     
@@ -342,12 +337,16 @@ async def cmd_partidos(message):
 
 @bot.message_handler(commands=['tabla'])
 async def cmd_tabla(message):
-    data = await api_football_call("standings")
-    if not data: return
-    txt = "🏆 **POSICIONES:**\n"
-    for t in data['standings'][0]['table'][:10]:
-        txt += f"`{t['position']}.` **{t['team']['shortName']}** ({t['points']} pts)\n"
-    await bot.reply_to(message, txt, parse_mode='Markdown')
+    # Endpoint de standings para LaLiga (PD)
+    headers = {'X-Auth-Token': FOOTBALL_DATA_KEY}
+    url = "https://api.football-data.org/v4/competitions/PD/standings"
+    try:
+        r = requests.get(url, headers=headers).json()
+        txt = "🏆 **POSICIONES LALIGA:**\n"
+        for t in r['standings'][0]['table'][:12]:
+            txt += f"`{t['position']}.` **{t['team']['shortName']}** ({t['points']} pts)\n"
+        await bot.reply_to(message, txt, parse_mode='Markdown')
+    except: pass
 
 @bot.message_handler(commands=['equipos'])
 async def cmd_equipos(message):
@@ -399,15 +398,13 @@ async def cmd_help(message):
            "• `/historial`: Picks registrados visuales.\n"
            "• `/validar`: Actualiza resultados reales.\n"
            "• `/config`: Cambia IAs.\n"
-           "• `/partidos`: Próximos juegos.")
+           "• `/partidos`: Próximos juegos de LaLiga.")
     await bot.reply_to(message, txt, parse_mode='Markdown')
 
-# --- Ciclo Principal con Limpieza de Conflictos ---
 async def main():
     logging.info("Iniciando Bot...")
     try:
         await bot.delete_webhook(drop_pending_updates=True)
-        logging.info("Conexiones previas limpiadas. Iniciando Polling...")
         await bot.polling(non_stop=True, timeout=60)
     except Exception as e:
         logging.error(f"Error en main: {e}")
