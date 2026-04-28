@@ -2,8 +2,8 @@ name: Auditoria de Pronosticos
 
 on:
   schedule:
-    - cron: '0 4 * * *'
-  workflow_dispatch:
+    - cron: '0 4 * * *' # Se ejecuta a las 4:00 AM cada día
+  workflow_dispatch: # Permite ejecutarlo manualmente desde el botón en GitHub
 
 permissions:
   contents: write
@@ -26,6 +26,7 @@ jobs:
 
       - name: Ejecutar Verificador
         env:
-          GITHUB_TOKEN: ${{ secrets.BOT_REPO_TOKEN }}
-          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+          # Usamos los nombres de variables que tienes configurados en Railway/GitHub
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
         run: python verificador.py
