@@ -9,5 +9,16 @@
         "stake": "0%",
         "nivel": "SIN VALOR ⚠️",
         "status": "⏳ PENDIENTE"
+    },
+    {
+        "fecha": "2026-04-28 12:58",
+        "partido": "Villarreal CF vs Levante UD",
+        "pick": "Villarreal CF",
+        "poisson": "67.5%",
+        "cuota": 1.85,
+        "edge": "13.4%",
+        "stake": "5.0%",
+        "nivel": "DIAMANTE 💎",
+        "status": "⏳ PENDIENTE"
     }
 ]
