@@ -21,7 +21,7 @@ load_dotenv()
 
 TOKEN = os.getenv('TOKEN_TELEGRAM')
 # UNIFICACIÓN: Sincronizado con trainer.py y github actions
-FOOTBALL_DATA_KEY = os.getenv('API_KEY_FOOTBALL') 
+FOOTBALL_DATA_KEY = os.getenv('API_KEY_FOOTBALL')
 ODDS_API_KEY = os.getenv('API_KEY_ODDS')
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
 
