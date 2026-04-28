@@ -126,7 +126,7 @@ async def ejecutar_ia(rol, prompt):
         logging.error(f"Error en {config['api']}: {e}")
         return f"❌ Error en Nodo {config['api']}: {str(e)[:60]}"
 
-# --- Persistencia en GitHub (Mejorada: Anti-Duplicados) ---
+# --- Persistencia en GitHub ---
 async def guardar_en_github(nuevo_registro=None, historial_completo=None):
     url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}"
     headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
@@ -137,7 +137,6 @@ async def guardar_en_github(nuevo_registro=None, historial_completo=None):
         if historial_completo is None:
             historial = json.loads(base64.b64decode(r.json()['content']).decode('utf-8')) if r.status_code == 200 else []
             if nuevo_registro:
-                # Si el partido ya existe como PENDIENTE, se actualiza en lugar de duplicar
                 index_existente = next((i for i, reg in enumerate(historial) 
                                       if reg['partido'] == nuevo_registro['partido'] 
                                       and reg['status'] == "⏳ PENDIENTE"), None)
@@ -250,11 +249,11 @@ async def handle_pronostico(message):
         })
         
         header = f"🛠 REPORTE: {'✅' if check_odds else '❌'} Cuotas | ✅ Poisson ({ph*100:.1f}%) | {'✅' if check_h2h else '❌'} H2H\n{'—'*20}\n"
-        prompt_e = f"Analiza {m_l} vs {m_v}.\nPoisson: {ph*100:.1f}% | Cuotas: {c_l}, {c_e}, {c_v}\nH2H: {h2h_str}\nEdge: {edge*100:.1f}%"
+        prompt_e = f"Analiza {m_l} vs {m_v}.\nPoisson: {ph*100:.1f}%\nCuotas: {c_l}, {c_e}, {c_v}\nH2H: {h2h_str}"
         analisis = await ejecutar_ia("estratega", prompt_e)
         res_final = f"{header}{analisis}\n\n🛰 **ESTRATEGA:** `{SISTEMA_IA['estratega']['api']}`"
         if SISTEMA_IA["auditor"]["nodo"]:
-            auditoria = await ejecutar_ia("auditor", f"Edge {edge*100:.1f}% | H2H: {h2h_str}\nEstratega: {analisis}")
+            auditoria = await ejecutar_ia("auditor", f"Edge {edge*100:.1f}% | Estratega: {analisis}")
             res_final += f"\n\n🛡 **AUDITOR:**\n{auditoria}"
         await bot.edit_message_text(res_final, message.chat.id, msg_espera.message_id, parse_mode='Markdown')
     except Exception as e:
@@ -375,9 +374,17 @@ async def cmd_help(message):
            "• `/partidos`: Próximos juegos.")
     await bot.reply_to(message, txt, parse_mode='Markdown')
 
+# --- Ciclo Principal con Limpieza de Conflictos ---
 async def main():
-    logging.info("Bot Iniciado...")
-    await bot.polling(non_stop=True)
+    logging.info("Iniciando Bot...")
+    try:
+        # Resolvemos el Error 409: Limpia webhooks y actualizaciones antiguas
+        await bot.delete_webhook(drop_pending_updates=True)
+        logging.info("Conexiones previas limpiadas. Iniciando Polling...")
+        await bot.polling(non_stop=True, timeout=60)
+    except Exception as e:
+        logging.error(f"Error en main: {e}")
+        await asyncio.sleep(5)
 
 if __name__ == "__main__":
     asyncio.run(main())
