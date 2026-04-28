@@ -19,10 +19,10 @@ from dotenv import load_dotenv
 logging.basicConfig(level=logging.INFO)
 load_dotenv()
 
-TOKEN = os.getenv('TOKEN_TELEGRAM')
+TOKEN = os.getenv('TOKEN_BOT')
 # UNIFICACIÓN: Sincronizado con trainer.py y github actions
-FOOTBALL_DATA_KEY = os.getenv('FOOTBALL_DATA_API_KEY') 
-ODDS_API_KEY = os.getenv('ODDS_API_KEY')
+FOOTBALL_DATA_KEY = os.getenv('API_KEY_FOOTBALL') 
+ODDS_API_KEY = os.getenv('API_KEY_ODDS')
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
 
 OFFSET_JUAREZ = -6
