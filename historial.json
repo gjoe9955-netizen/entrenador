@@ -20,5 +20,12 @@
         "stake": "0.88%",
         "nivel": "PLATA 🥈",
         "status": "⏳ PENDIENTE"
+    },
+    {
+        "fecha": "2026-04-28 14:48",
+        "partido": "Girona FC vs RCD Mallorca",
+        "edge": "-2.47%",
+        "stake": "0%",
+        "veredicto": "❌ NO BET"
     }
 ]
