@@ -65,14 +65,14 @@ async def ejecutar_ia(rol, prompt):
 
     instrucciones = {
         "estratega": (
-            "Eres un analista sintético. PROHIBIDO repetir datos del prompt. "
-            "Estilo: 'Bullet points'. Enfócate en la ventaja táctica y por qué el H2H valida o no a Poisson. "
-            "Máximo 100 palabras."
+            "Eres un analista sintetico deportivo. PROHIBIDO repetir datos numericos del prompt de forma literal. "
+            "Estilo: 'Bullet points'. Analiza si el historial H2H del CSV valida o contradice la proyeccion de Poisson. "
+            "Maximo 120 palabras."
         ),
         "auditor": (
-            "Eres un Auditor de Riesgos. Prohibido saludar o definir conceptos. "
-            "Solo responde: ¿El stake es coherente con el Edge? ¿Hay sesgo en el Estratega? "
-            "Máximo 2 párrafos cortos."
+            "Eres un Auditor de Riesgos. Prohibido saludar. "
+            "Evalua si el Estratega ignoro la tendencia del CSV y si el Stake es coherente con el Edge. "
+            "Maximo 2 parrafos cortos."
         )
     }
 
@@ -220,16 +220,30 @@ async def handle_pronostico(message):
             "stake": f"{stake}%", "nivel": nivel, "status": "⏳ PENDIENTE"
         }))
 
+        # Encabezado corregido para mostrar el estado real del CSV
         header = f"🛠 REPORTE: {'✅' if check_odds else '❌'} Cuotas | ✅ Poisson ({ph*100:.1f}%) | {'✅' if check_h2h else '❌'} H2H (CSV)\n{'—'*20}\n"
         
-        prompt_e = (f"Partido: {m_l}-{m_v}. Poisson: {ph*100:.1f}%. Cuota: {c_l}. H2H: {h2h_str}. "
-                    f"Edge: {edge*100:.1f}%. Stake Sugerido: {stake}%. Justifica brevemente.")
+        # Prompt de usuario mejorado con datos del CSV explícitos
+        prompt_e = (
+            f"Analiza el partido {m_l} vs {m_v}.\n"
+            f"- Probabilidad Poisson: {ph*100:.1f}%\n"
+            f"- Cuota Mercado: {c_l} (implica {1/c_l*100:.1f}%)\n"
+            f"- Datos H2H (CSV): {h2h_str}\n"
+            f"- Ventaja (Edge): {edge*100:.1f}%\n"
+            f"- Stake Recomendado: {stake}%\n"
+            "Compara si la tendencia del H2H en el CSV valida el modelo Poisson o lo contradice."
+        )
         
         analisis = await ejecutar_ia("estratega", prompt_e)
         res_final = f"{header}{analisis}\n\n🛰 **ESTRATEGA:** `{SISTEMA_IA['estratega']['api']}` ({SISTEMA_IA['estratega']['nodo']})"
 
         if SISTEMA_IA["auditor"]["nodo"]:
-            audit_prompt = f"Analiza coherencia: Edge {edge*100:.1f}% vs Stake {stake}%. Texto Estratega: {analisis}"
+            # Auditoría con contexto del CSV
+            audit_prompt = (
+                f"Analiza coherencia: Edge {edge*100:.1f}% vs Stake {stake}%.\n"
+                f"Datos CSV: {h2h_str}\n"
+                f"Analisis del Estratega: {analisis}"
+            )
             auditoria = await ejecutar_ia("auditor", audit_prompt)
             res_final += f"\n\n🛡 **AUDITOR:**\n{auditoria}\n(`{SISTEMA_IA['auditor']['nodo']}`)"
 
@@ -237,7 +251,7 @@ async def handle_pronostico(message):
     except Exception as e:
         await bot.edit_message_text(f"❌ Error crítico: {str(e)[:100]}", message.chat.id, msg_espera.message_id)
 
-# --- Comandos Adicionales (Sin cambios) ---
+# --- Comandos Adicionales ---
 @bot.message_handler(commands=['historial'])
 async def cmd_historial(message):
     url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/{FILE_PATH}"
