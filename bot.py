@@ -4,6 +4,8 @@ import asyncio
 import logging
 import requests
 import base64
+import io
+import pandas as pd
 from scipy.stats import poisson
 from datetime import datetime, timedelta
 
@@ -49,7 +51,6 @@ async def ejecutar_ia(rol, prompt):
     config = SISTEMA_IA[rol]
     if not config["nodo"]: return None
     
-    # Mapeo flexible según captura de pantalla del usuario
     s_key = os.getenv('SAMBA_KEY') or os.getenv('SAMBANOVA_API_KEY')
     g_key = os.getenv('GROQ_API_KEY') or os.getenv('GROQ_KEY')
     
@@ -63,7 +64,6 @@ async def ejecutar_ia(rol, prompt):
         api_key = g_key
 
     try:
-        # Inicialización con la llave correcta detectada
         client = OpenAI(api_key=api_key, base_url=base_url)
         res = await asyncio.to_thread(
             client.chat.completions.create,
@@ -126,26 +126,36 @@ async def api_football_call(endpoint):
     except: return None
 
 async def obtener_h2h_directo(equipo_l, equipo_v):
-    headers = {'X-Auth-Token': FOOTBALL_DATA_KEY}
+    # URL del CSV de football-data.co.uk para La Liga (SP1)
+    URL_CSV = "https://www.football-data.co.uk/mmz4281/2526/SP1.csv"
     try:
-        data = await api_football_call("teams")
-        teams = data.get('teams', []) if data else []
-        id_l = next((t['id'] for t in teams if equipo_l.lower() in t['shortName'].lower() or t['shortName'].lower() in equipo_l.lower()), None)
-        id_v = next((t['id'] for t in teams if equipo_v.lower() in t['shortName'].lower() or t['shortName'].lower() in equipo_v.lower()), None)
-        if id_l and id_v:
-            url = f"https://api.football-data.org/v4/teams/{id_l}/matches?competitors={id_v}&status=FINISHED"
-            r = await asyncio.to_thread(requests.get, url, headers=headers)
-            matches = r.json().get('matches', [])
-            if matches:
-                l, v, e = 0, 0, 0
-                for m in matches[:5]:
-                    w = m['score']['winner']
-                    if w == 'HOME_TEAM': l += 1
-                    elif w == 'AWAY_TEAM': v += 1
-                    else: e += 1
-                return f"Local {l} | Visitante {v} | Empates {e}", True
-        return "Sin datos directos.", False
-    except: return "Error API.", False
+        r = await asyncio.to_thread(requests.get, URL_CSV, timeout=10)
+        if r.status_code != 200: return "Error CSV.", False
+        
+        df = pd.read_csv(io.StringIO(r.text))
+        # Filtro flexible para nombres de equipos en el CSV
+        mask = (
+            ((df['HomeTeam'].str.contains(equipo_l[:5], case=False)) & (df['AwayTeam'].str.contains(equipo_v[:5], case=False))) |
+            ((df['HomeTeam'].str.contains(equipo_v[:5], case=False)) & (df['AwayTeam'].str.contains(equipo_l[:5], case=False)))
+        )
+        h2h = df[mask]
+        
+        if h2h.empty: return "Sin H2H en CSV.", False
+        
+        l, v, e = 0, 0, 0
+        for _, row in h2h.iterrows():
+            is_l_home = equipo_l.lower()[:4] in row['HomeTeam'].lower()
+            if row['FTR'] == 'H':
+                if is_l_home: l += 1
+                else: v += 1
+            elif row['FTR'] == 'A':
+                if is_l_home: v += 1
+                else: l += 1
+            else: e += 1
+        return f"CSV H2H: Local {l} | Vis {v} | Emp {e}", True
+    except Exception as e:
+        logging.error(f"H2H CSV Error: {e}")
+        return "Error Procesando CSV.", False
 
 # --- Pronóstico y Criterio de Kelly ---
 @bot.message_handler(commands=['pronostico', 'valor'])
@@ -198,7 +208,7 @@ async def handle_pronostico(message):
             "stake": f"{stake}%", "nivel": nivel, "status": "⏳ PENDIENTE"
         }))
 
-        header = f"🛠 REPORTE: {'✅' if check_odds else '❌'} Cuotas | ✅ Poisson ({ph*100:.1f}%) | {'✅' if check_h2h else '❌'} H2H\n{'—'*20}\n"
+        header = f"🛠 REPORTE: {'✅' if check_odds else '❌'} Cuotas | ✅ Poisson ({ph*100:.1f}%) | {'✅' if check_h2h else '✅' if 'CSV' in h2h_str else '❌'} H2H (CSV)\n{'—'*20}\n"
         prompt_e = (f"Analiza: {m_l} vs {m_v}. Poisson: {ph*100:.1f}%. Cuota: {c_l}. "
                     f"H2H: {h2h_str}. Edge: {edge*100:.1f}%. NIVEL: {nivel}. "
                     f"Criterio Kelly sugiere Stake {stake}%. Justifica el valor de la apuesta.")
