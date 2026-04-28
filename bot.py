@@ -116,21 +116,35 @@ async def guardar_en_github(nuevo_registro=None, historial_completo=None):
 
 # --- APIs de Datos ---
 async def obtener_datos_mercado(equipo_l):
-    if not ODDS_API_KEY: return 1.85, 3.50, 4.00, False
+    if not ODDS_API_KEY: 
+        logging.warning("⚠️ Sin API KEY para cuotas.")
+        return 1.85, 3.50, 4.00, False
     try:
         url = "https://api.the-odds-api.com/v4/sports/soccer_spain_la_liga/odds/"
-        params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h'}
+        params = {'apiKey': ODDS_API_KEY, 'regions': 'eu', 'markets': 'h2h', 'oddsFormat': 'decimal'}
         r = await asyncio.to_thread(requests.get, url, params=params, timeout=10)
+        
         if r.status_code == 200:
-            for match in r.json():
-                home = match['home_team'].lower()
-                if equipo_l.lower() in home or home in equipo_l.lower():
-                    odds = match['bookmakers'][0]['markets'][0]['outcomes']
-                    ol = next(o['price'] for o in odds if o['name'] == match['home_team'])
-                    ov = next(o['price'] for o in odds if o['name'] == match['away_team'])
-                    oe = next(o['price'] for o in odds if o['name'] in ['Draw', 'Tie'])
-                    return ol, oe, ov, True
-    except: pass
+            data = r.json()
+            # Limpieza para match flexible (ej: "Real Madrid CF" -> "real madrid")
+            search_name = equipo_l.lower().replace("cf", "").replace("rcd", "").replace("sd", "").strip()
+            
+            for match in data:
+                home_api = match['home_team'].lower()
+                # Validación bidireccional
+                if search_name in home_api or home_api in search_name:
+                    for bookmaker in match['bookmakers']:
+                        odds_list = bookmaker['markets'][0]['outcomes']
+                        try:
+                            ol = next(o['price'] for o in odds_list if o['name'] == match['home_team'])
+                            ov = next(o['price'] for o in odds_list if o['name'] == match['away_team'])
+                            oe = next(o['price'] for o in odds_list if o['name'] in ['Draw', 'Tie'])
+                            logging.info(f"✅ Cuotas obtenidas para {equipo_l}")
+                            return ol, oe, ov, True
+                        except StopIteration: continue
+            logging.warning(f"❓ No se hallaron cuotas para {equipo_l}")
+    except Exception as e:
+        logging.error(f"❌ Error Odds API: {e}")
     return 1.85, 3.50, 4.00, False
 
 async def obtener_h2h_directo(equipo_l, equipo_v):
@@ -183,10 +197,10 @@ async def handle_pronostico(message):
         if not m_l or not m_v:
             await bot.edit_message_text("❌ Equipos no encontrados.", message.chat.id, msg_espera.message_id); return
         
+        # INTEGRACIÓN: Búsqueda de cuotas mejorada
         c_l, c_e, c_v, check_odds = await obtener_datos_mercado(m_l)
         h2h_str, check_h2h = await obtener_h2h_directo(m_l, m_v)
         
-        # Poisson y Kelly
         l_s, v_s = raw_json[liga]['teams'][m_l], raw_json[liga]['teams'][m_v]
         avg = raw_json[liga]['averages']
         mu_l = l_s['att_h'] * v_s['def_a'] * avg['league_home']
@@ -217,50 +231,28 @@ async def handle_pronostico(message):
     except Exception as e:
         await bot.edit_message_text(f"❌ Error: {e}", message.chat.id, msg_espera.message_id)
 
+# --- Handlers de Comando y Configuración ---
 @bot.message_handler(commands=['historial'])
 async def cmd_historial(message):
     try:
         r = requests.get(f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/{FILE_PATH}").json()
         if not r: return await bot.reply_to(message, "📭 **HISTORIAL VACÍO**")
-        txt = "📊 **RESUMEN DE OPERACIONES**\n" + f"{'—'*20}\n\n"
+        txt = "📊 **RESUMEN**\n" + f"{'—'*20}\n\n"
         for i in r[-7:]:
             status = i.get('status', '⏳ PENDIENTE')
             icon = "✅" if "WIN" in status else "❌" if "LOSS" in status else "⏳"
-            txt += f"{icon} **{i['partido']}**\n📅 `{i['fecha']}`\n🎯 **Pick:** `{i['pick']}` | 💰 **Stake:** `{i['stake']}`\n📈 **Nivel:** {i['nivel']}\n{'—'*18}\n"
+            txt += f"{icon} **{i['partido']}**\n🎯 **Pick:** `{i['pick']}` | 💰 **Stake:** `{i['stake']}`\n{'—'*18}\n"
         await bot.reply_to(message, txt, parse_mode='Markdown')
     except: await bot.reply_to(message, "❌ Error al leer historial.")
-
-@bot.message_handler(commands=['validar'])
-async def cmd_validar(message):
-    msg = await bot.reply_to(message, "🔍 Validando...")
-    try:
-        historial = requests.get(f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/{FILE_PATH}").json()
-        data_api = await api_football_call("matches?status=FINISHED")
-        actualizados = 0
-        for item in historial:
-            if item.get("status") == "⏳ PENDIENTE":
-                for m in data_api['matches']:
-                    h_api, a_api = m['homeTeam']['shortName'].lower(), m['awayTeam']['shortName'].lower()
-                    if h_api in item['partido'].lower() and a_api in item['partido'].lower():
-                        res = m['score']['winner']
-                        item['status'] = "✅ WIN" if (res == 'HOME_TEAM' and h_api in item['pick'].lower()) or (res == 'AWAY_TEAM' and a_api in item['pick'].lower()) else "❌ LOSS"
-                        actualizados += 1
-        if actualizados > 0: await guardar_en_github(historial_completo=historial)
-        await bot.edit_message_text(f"✅ Se validaron {actualizados} picks.", message.chat.id, msg.message_id)
-    except: await bot.edit_message_text("❌ Error en validación.", message.chat.id, msg.message_id)
 
 @bot.message_handler(commands=['help'])
 async def cmd_help(message):
     txt = ("🤖 **BOT ANALISTA V5.2**\n\n"
            "• `/pronostico L vs V`: Poisson + Kelly + H2H.\n"
-           "• `/historial`: Picks registrados visuales.\n"
-           "• `/validar`: Actualiza resultados reales.\n"
-           "• `/config`: Cambia IAs (Samba/Groq).\n"
-           "• `/partidos`: Próximos juegos (Hora Juárez).\n"
-           "• `/equipos`: Lista de nombres válidos.")
+           "• `/historial`: Ver últimos registros.\n"
+           "• `/config`: Configurar IAs.")
     await bot.reply_to(message, txt, parse_mode='Markdown')
 
-# --- Handlers de Configuración y Polling ---
 @bot.message_handler(commands=['config'])
 async def cmd_config(message):
     markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🧠 ASIGNAR ESTRATEGA", callback_data="set_rol_estratega"))
