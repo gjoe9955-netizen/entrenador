@@ -4,8 +4,6 @@ import asyncio
 import logging
 import requests
 import base64
-import csv
-from io import StringIO
 from scipy.stats import poisson
 from datetime import datetime, timedelta
 
@@ -19,15 +17,14 @@ logging.basicConfig(level=logging.INFO)
 load_dotenv()
 
 TOKEN = os.getenv('TOKEN_TELEGRAM')
-GROQ_KEY = os.getenv('GROQ_API_KEY')
+GROQ_KEY = os.getenv('GROQ_KEY')
 SAMBA_KEY = os.getenv('SAMBA_KEY')
 FOOTBALL_DATA_KEY = os.getenv('FOOTBALL_DATA_KEY')
-ODDS_API_KEY = os.getenv('API_KEY_ODDS')
+ODDS_API_KEY = os.getenv('ODDS_API_KEY')
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
 
 OFFSET_JUAREZ = -6
 URL_JSON = "https://raw.githubusercontent.com/gjoe9955-netizen/entrenador2/main/modelo_poisson.json"
-URL_CSV_SPAIN = "https://www.football-data.co.uk/mmz4281/2526/SP1.csv"
 REPO_OWNER = "gjoe9955-netizen"
 REPO_NAME = "entrenador2"
 FILE_PATH = "historial.json"
@@ -65,22 +62,8 @@ async def guardar_en_github(nuevo_registro=None, historial_completo=None):
 SISTEMA_IA = {
     "estratega": {"api": None, "nodo": None},
     "auditor": {"api": None, "nodo": None},
-
-    "nodos_samba": [
-        "DeepSeek-V3.1",
-        "DeepSeek-V3.1-cb",
-        "DeepSeek-V3.2",
-        "Llama-4-Maverick-17B-128E-Instruct",
-        "Meta-Llama-3.3-70B-Instruct"
-    ],
-
-    "nodos_groq": [
-        "llama-3.3-70b-versatile",
-        "groq/compound-mini",
-        "meta-llama/llama-4-scout-17b-16e-instruct",
-        "llama-3.1-8b-instant",
-        "groq/compound"
-    ]
+    "nodos_groq": ['llama-3.3-70b-versatile', 'llama3-70b-8192', 'mixtral-8x7b-32768'],
+    "nodos_samba": ['Meta-Llama-3.3-70B-Instruct', 'Meta-Llama-3.1-405B-Instruct', 'Llama-3.1-Tulu-3-405B']
 }
 
 # --- Motores de IA (Groq & SambaNova) ---
@@ -109,38 +92,6 @@ async def ejecutar_ia(rol, prompt):
         return f"❌ Error en Nodo {config['api']}"
 
 # --- Núcleo Estadístico y APIs ---
-async def verificar_actualizacion_csv():
-    try:
-        r = await asyncio.to_thread(requests.head, URL_CSV_SPAIN, timeout=5)
-        last_modified = r.headers.get('Last-Modified')
-        if last_modified:
-            fecha_mod = datetime.strptime(last_modified, '%a, %d %b %Y %H:%M:%S %Z')
-            hoy = datetime.utcnow()
-            diferencia = hoy - fecha_mod
-            status = "✅ CSV OK" if diferencia.days <= 3 else "⚠️ CSV ANTIGUO"
-            return f"{status} ({fecha_mod.strftime('%d/%m')})", True
-    except: pass
-    return "❌ ERROR CSV", False
-
-async def obtener_h2h_csv(equipo_l, equipo_v):
-    try:
-        r = await asyncio.to_thread(requests.get, URL_CSV_SPAIN, timeout=10)
-        if r.status_code != 200: return "Sin datos CSV", False
-        
-        reader = csv.DictReader(StringIO(r.text))
-        l, v, e = 0, 0, 0
-        encontrados = 0
-        for row in reader:
-            h, a = row['HomeTeam'].lower(), row['AwayTeam'].lower()
-            if (equipo_l.lower() in h or h in equipo_l.lower()) and (equipo_v.lower() in a or a in equipo_v.lower()):
-                res = row['FTR']
-                if res == 'H': l += 1
-                elif res == 'A': v += 1
-                else: e += 1
-                encontrados += 1
-        return (f"L:{l} V:{v} E:{e}", True) if encontrados > 0 else ("Sin H2H CSV", False)
-    except: return "Error Procesado", False
-
 async def obtener_datos_mercado(equipo_l):
     if not ODDS_API_KEY: return 1.85, 3.50, 4.00, False
     try:
@@ -186,9 +137,9 @@ async def obtener_h2h_directo(equipo_l, equipo_v):
                     if w == 'HOME_TEAM': l += 1
                     elif w == 'AWAY_TEAM': v += 1
                     else: e += 1
-                return f"L:{l} V:{v} E:{e}", True
-        return "Sin datos", False
-    except: return "Error API", False
+                return f"H2H Real: Local {l} | Visitante {v} | Empates {e}", True
+        return "H2H: Sin datos directos.", False
+    except: return "H2H: Error API.", False
 
 # --- Comando Principal: Pronóstico ---
 @bot.message_handler(commands=['pronostico', 'valor'])
@@ -201,99 +152,90 @@ async def handle_pronostico(message):
         await bot.reply_to(message, "⚠️ `/pronostico Local vs Visitante`."); return
 
     l_q, v_q = [t.strip() for t in parts[1].split(" vs ")]
-    msg_espera = await bot.reply_to(message, "📡 Ejecutando Protocolo Avanzado (API + CSV)...")
+    msg_espera = await bot.reply_to(message, "📡 Consultando APIs y Poisson...")
 
-    try:
-        raw_json = requests.get(URL_JSON)
-        full_data = raw_json.json()
-        check_json = True if raw_json.status_code == 200 else False
-        
-        c_l, c_e, c_v, check_odds = await obtener_datos_mercado(l_q)
-        status_csv, check_csv_date = await verificar_actualizacion_csv()
-        h2h_api, check_h2h = await obtener_h2h_directo(l_q, v_q)
-        h2h_csv, _ = await obtener_h2h_csv(l_q, v_q)
+    raw_json = requests.get(URL_JSON)
+    full_data = raw_json.json()
+    check_json = True if raw_json.status_code == 200 else False
+    
+    c_l, c_e, c_v, check_odds = await obtener_datos_mercado(l_q)
+    h2h, check_h2h = await obtener_h2h_directo(l_q, v_q)
 
-        liga = next(iter(full_data))
-        m_l = next((t for t in full_data[liga]['teams'] if t.lower() in l_q.lower() or l_q.lower() in t.lower()), None)
-        m_v = next((t for t in full_data[liga]['teams'] if t.lower() in v_q.lower() or v_q.lower() in t.lower()), None)
-        
-        if not m_l or not m_v:
-            await bot.edit_message_text("❌ Equipo no encontrado en el JSON.", message.chat.id, msg_espera.message_id); return
+    liga = next(iter(full_data))
+    m_l = next((t for t in full_data[liga]['teams'] if t.lower() in l_q.lower() or l_q.lower() in t.lower()), None)
+    m_v = next((t for t in full_data[liga]['teams'] if t.lower() in v_q.lower() or v_q.lower() in t.lower()), None)
+    
+    if not m_l or not m_v:
+        await bot.edit_message_text("❌ Equipo no encontrado en el JSON.", message.chat.id, msg_espera.message_id); return
 
-        l_s, v_s = full_data[liga]['teams'][m_l], full_data[liga]['teams'][m_v]
-        avg = full_data[liga]['averages']
-        lh = l_s['att_h'] * v_s['def_a'] * avg['league_home']
-        la = v_s['att_a'] * l_s['def_h'] * avg['league_away']
-        
-        ph, pd, pa = 0, 0, 0
-        for x in range(6):
-            for y in range(6):
-                p = poisson.pmf(x, lh) * poisson.pmf(y, la)
-                if x > y: ph += p
-                elif x == y: pd += p
-                else: pa += p
+    l_s, v_s = full_data[liga]['teams'][m_l], full_data[liga]['teams'][m_v]
+    avg = full_data[liga]['averages']
+    lh = l_s['att_h'] * v_s['def_a'] * avg['league_home']
+    la = v_s['att_a'] * l_s['def_h'] * avg['league_away']
+    
+    ph, pd, pa = 0, 0, 0
+    for x in range(6):
+        for y in range(6):
+            p = poisson.pmf(x, lh) * poisson.pmf(y, la)
+            if x > y: ph += p
+            elif x == y: pd += p
+            else: pa += p
 
-        p_win = ph 
-        prob_implied = 1 / c_l
-        edge_real = p_win - prob_implied
-        
-        pick_final = m_l
-        if edge_real > 0.03:
-            kelly = ((c_l * p_win) - 1) / (c_l - 1)
-            stake_final = round(kelly * 0.25 * 100, 2)
-            stake_final = max(0, min(stake_final, 5)) 
-            nivel = "DIAMANTE 💎" if edge_real > 0.07 else ("ORO 🥇" if edge_real > 0.04 else "PLATA 🥈")
-        else:
-            stake_final = 0
-            pick_final = "NO APOSTAR"
-            nivel = "RIESGO ALTO / SIN VALOR ⚠️"
+    p_win = ph 
+    p_percent = p_win * 100
+    prob_implied = 1 / c_l
+    edge_real = p_win - prob_implied
+    
+    if edge_real > 0:
+        kelly = ((c_l * p_win) - 1) / (c_l - 1)
+        stake_final = round(kelly * 0.25 * 100, 2)
+        stake_final = max(0, min(stake_final, 5)) 
+    else:
+        stake_final = 0
 
-        asyncio.create_task(guardar_en_github(nuevo_registro={
-            "fecha": (datetime.utcnow() + timedelta(hours=OFFSET_JUAREZ)).strftime('%Y-%m-%d %H:%M'),
-            "partido": f"{m_l} vs {m_v}",
-            "pick": pick_final,
-            "poisson": f"{p_win*100:.1f}%",
-            "cuota": c_l,
-            "edge": f"{edge_real*100:.1f}%",
-            "stake": f"{stake_final}%",
-            "nivel": nivel,
-            "status": "⏳ PENDIENTE"
-        }))
+    if edge_real > 0.05: nivel = "DIAMANTE 💎"
+    elif edge_real > 0.02: nivel = "ORO 🥇"
+    elif edge_real > 0: nivel = "PLATA 🥈"
+    else: nivel = "RIESGO ALTO / SIN VALOR ⚠️"
 
-        header = (f"🛠 REPORTE: {'✅' if check_odds else '❌'} Cuotas | "
-                  f"{'✅' if check_json else '❌'} Poisson | "
-                  f"{status_csv}\n"
-                  f"————————————————————\n")
-        
-        prompt_e_raw = (
-            f"ERES UN ANALISTA DE ÉLITE. Evalúa: {m_l} vs {m_v}.\n"
-            f"VARIABLES:\n- Poisson: {p_win*100:.1f}%\n- Cuota: {c_l}\n- H2H API: {h2h_api}\n- H2H CSV: {h2h_csv}\n\n"
-            f"INSTRUCCIONES:\n1. P_Final (60% Poisson / 40% xG-H2H).\n2. Si Cuota Mercado < 1/P_Final, advierte.\n"
-            f"FORMATO:\n🎯 PICK: {pick_final}\n📈 NIVEL: {nivel}\n💰 STAKE: {stake_final}%\n"
-            f"🔬 MÉTRICAS: P_Final [%], Cuota Justa, Edge [%]\n📝 ANÁLISIS: Breve."
-        )
-        analisis = await ejecutar_ia("estratega", prompt_e_raw[:1500])
-        footer = f"\n\n{'—'*20}\n🛰 **MODO:** xG + Poisson + Kelly"
+    asyncio.create_task(guardar_en_github(nuevo_registro={
+        "fecha": (datetime.utcnow() + timedelta(hours=OFFSET_JUAREZ)).strftime('%Y-%m-%d %H:%M'),
+        "partido": f"{m_l} vs {m_v}",
+        "pick": m_l if edge_real > 0 else "No Bet",
+        "poisson": f"{p_percent:.1f}%",
+        "cuota": c_l,
+        "edge": f"{edge_real*100:.1f}%",
+        "stake": f"{stake_final}%",
+        "nivel": nivel,
+        "status": "⏳ PENDIENTE"
+    }))
 
-        if SISTEMA_IA["auditor"]["nodo"]:
-            nodo_nombre = SISTEMA_IA['auditor']['nodo'].replace('_', '\\_')
-            prompt_a_raw = f"AUDITORÍA: Analiza '{analisis}'. H2H: {h2h_api}/{h2h_csv}. Responde VEREDICTO y RAZÓN (1 línea)."
-            auditoria = await ejecutar_ia("auditor", prompt_a_raw[:1500])
-            footer += f"\n🛡 **AUDITOR:** `{nodo_nombre}`"
-            final = f"{header}{analisis}\n\n{auditoria}{footer}"
-        else:
-            final = f"{header}{analisis}{footer}"
+    header = (f"🛠 REPORTE: {'✅' if check_odds else '❌'} Cuotas | "
+              f"{'✅' if check_json else '❌'} Poisson ({p_percent:.1f}%) | "
+              f"{'✅' if check_h2h else '❌'} H2H\n"
+              f"————————————————————\n")
+    
+    prompt_e = (
+        f"Analista Senior. Partido: {m_l} vs {m_v}.\n"
+        f"Poisson: {p_percent:.1f}%. Cuota: {c_l}. H2H: {h2h}.\n"
+        f"NIVEL: {nivel}. STAKE: {stake_final}%.\n\n"
+        f"Formato: NIVEL, STAKE, VALOR (4 líneas técnicas), PICK, CUOTA, EDGE."
+    )
+    
+    analisis = await ejecutar_ia("estratega", prompt_e)
+    footer = f"\n\n{'—'*20}\n🛰 **ESTRATEGA:** `{SISTEMA_IA['estratega']['api']}` ({SISTEMA_IA['estratega']['nodo']})"
 
-        try:
-            await bot.edit_message_text(final, message.chat.id, msg_espera.message_id, parse_mode='Markdown')
-        except:
-            await bot.edit_message_text(final, message.chat.id, msg_espera.message_id)
+    if SISTEMA_IA["auditor"]["nodo"]:
+        prompt_a = f"Auditor. Valida: '{analisis}'. Poisson: {p_percent:.1f}%. Reporta VEREDICTO."
+        auditoria = await ejecutar_ia("auditor", prompt_a)
+        footer += f"\n🛡 **AUDITOR:** `{SISTEMA_IA['auditor']['api']}` ({SISTEMA_IA['auditor']['nodo']})"
+        final = f"{header}{analisis}\n\n{auditoria}{footer}"
+    else:
+        final = f"{header}{analisis}{footer}"
 
-    except Exception as e:
-        logging.error(f"Error: {e}")
-        await bot.edit_message_text("❌ Error crítico en el análisis.", message.chat.id, msg_espera.message_id)
+    await bot.edit_message_text(final, message.chat.id, msg_espera.message_id, parse_mode='Markdown')
 
-# --- Gestión de Historial y Otros Comandos (Igual que el anterior) ---
+# --- Gestión de Historial y Validación ---
 @bot.message_handler(commands=['historial'])
 async def cmd_historial(message):
     url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/{FILE_PATH}"
@@ -310,12 +252,14 @@ async def cmd_historial(message):
 
 @bot.message_handler(commands=['validar'])
 async def cmd_validar(message):
-    msg_espera = await bot.reply_to(message, "🔍 Buscando resultados...")
+    msg_espera = await bot.reply_to(message, "🔍 Buscando resultados finales en la API...")
     url_h = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/{FILE_PATH}"
+    
     try:
         historial = requests.get(url_h).json()
         data_api = await api_football_call("matches?status=FINISHED")
-        if not data_api: await bot.edit_message_text("❌ Sin resultados nuevos.", message.chat.id, msg_espera.message_id); return
+        if not data_api: await bot.edit_message_text("❌ No hay resultados nuevos en la API.", message.chat.id, msg_espera.message_id); return
+
         count = 0
         for item in historial:
             if item.get("status") == "⏳ PENDIENTE":
@@ -323,17 +267,22 @@ async def cmd_validar(message):
                     h_api, a_api = m['homeTeam']['shortName'].lower(), m['awayTeam']['shortName'].lower()
                     if h_api in item['partido'].lower() and a_api in item['partido'].lower():
                         res = m['score']['winner']
-                        if "NO APOSTAR" in item['pick']: item['status'] = "➖ VOID"
-                        elif (res == 'HOME_TEAM' and h_api in item['pick'].lower()) or (res == 'AWAY_TEAM' and a_api in item['pick'].lower()):
+                        if item['pick'] == "No Bet": item['status'] = "➖ VOID"
+                        elif (res == 'HOME_TEAM' and h_api in item['pick'].lower()) or \
+                             (res == 'AWAY_TEAM' and a_api in item['pick'].lower()):
                             item['status'] = "✅ WIN"
-                        else: item['status'] = "❌ LOSS"
+                        else:
+                            item['status'] = "❌ LOSS"
                         count += 1
+
         if count > 0:
             await guardar_en_github(historial_completo=historial)
-            await bot.edit_message_text(f"✅ Se validaron {count} partidos.", message.chat.id, msg_espera.message_id)
-        else: await bot.edit_message_text("ℹ️ No hay cierres nuevos.", message.chat.id, msg_espera.message_id)
-    except: await bot.edit_message_text("❌ Fallo en validación.", message.chat.id, msg_espera.message_id)
+            await bot.edit_message_text(f"✅ Se validaron {count} partidos nuevos.", message.chat.id, msg_espera.message_id)
+        else:
+            await bot.edit_message_text("ℹ️ No se encontraron cierres para los pendientes.", message.chat.id, msg_espera.message_id)
+    except: await bot.edit_message_text("❌ Fallo en la validación.", message.chat.id, msg_espera.message_id)
 
+# --- Comandos de Información ---
 @bot.message_handler(commands=['partidos'])
 async def cmd_partidos(message):
     data = await api_football_call("matches?status=SCHEDULED")
@@ -360,46 +309,63 @@ async def cmd_equipos(message):
     equipos = ", ".join([f"`{e}`" for e in res[liga]['teams'].keys()])
     await bot.reply_to(message, f"📋 **EQUIPOS JSON:**\n\n{equipos}", parse_mode='Markdown')
 
+# --- Gestión de Nodos y Configuración ---
 @bot.message_handler(commands=['config'])
 async def cmd_config(message):
-    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🧠 ASIGNAR ESTRATEGA", callback_data="rol_est"))
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🧠 ASIGNAR ESTRATEGA", callback_data="set_rol_estratega"))
     await bot.reply_to(message, "🛠 **CONFIGURACIÓN DE RED**", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('rol_'))
+@bot.callback_query_handler(func=lambda call: call.data.startswith('set_rol_'))
 async def cb_rol(call):
-    rol_code = call.data.split('_')[-1]
-    markup = InlineKeyboardMarkup().row(InlineKeyboardButton("Groq", callback_data=f"api_{rol_code}_G"), InlineKeyboardButton("SambaNova", callback_data=f"api_{rol_code}_S"))
-    await bot.edit_message_text(f"API para {rol_code.upper()}:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+    rol = call.data.split('_')[-1]
+    markup = InlineKeyboardMarkup().row(
+        InlineKeyboardButton("Groq", callback_data=f"set_api_{rol}_GROQ"),
+        InlineKeyboardButton("SambaNova", callback_data=f"set_api_{rol}_SAMBA")
+    )
+    await bot.edit_message_text(f"API para {rol.upper()}:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('api_'))
+@bot.callback_query_handler(func=lambda call: call.data.startswith('set_api_'))
 async def cb_api(call):
-    _, rol_code, api_code = call.data.split('_')
-    nodos = SISTEMA_IA["nodos_groq"] if api_code == 'G' else SISTEMA_IA["nodos_samba"]
+    _, _, rol, api = call.data.split('_')
+    nodos = SISTEMA_IA["nodos_groq"] if api == 'GROQ' else SISTEMA_IA["nodos_samba"]
     markup = InlineKeyboardMarkup()
-    for n in nodos: markup.add(InlineKeyboardButton(n, callback_data=f"sv_{rol_code}_{api_code}_{n}"[:64]))
+    for n in nodos:
+        markup.add(InlineKeyboardButton(n, callback_data=f"save_nodo_{rol}_{api}_{n}"))
     await bot.edit_message_text(f"Selecciona Nodo:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('sv_'))
+@bot.callback_query_handler(func=lambda call: call.data.startswith('save_nodo_'))
 async def cb_save(call):
-    _, rol_code, api_code, nodo = call.data.split('_')
-    rol = "estratega" if rol_code == "est" else "auditor"
-    api = "GROQ" if api_code == "G" else "SAMBA"
+    _, _, rol, api, nodo = call.data.split('_')
     SISTEMA_IA[rol] = {"api": api, "nodo": nodo}
     markup = InlineKeyboardMarkup()
-    if rol == "estratega": markup.add(InlineKeyboardButton("⚖️ AÑADIR AUDITOR", callback_data="rol_aud"))
+    if rol == "estratega": markup.add(InlineKeyboardButton("⚖️ AÑADIR AUDITOR", callback_data="set_rol_auditor"))
     markup.add(InlineKeyboardButton("🏁 FINALIZAR", callback_data="config_fin"))
     await bot.edit_message_text(f"✅ {rol.upper()} listo: `{nodo}`", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "config_fin")
-async def cb_fin(call): await bot.edit_message_text("🚀 **SISTEMA LISTO**", call.message.chat.id, call.message.message_id)
+async def cb_fin(call):
+    await bot.edit_message_text("🚀 **SISTEMA LISTO**", call.message.chat.id, call.message.message_id)
 
 @bot.message_handler(commands=['help'])
 async def cmd_help(message):
-    help_text = "🤖 **V6.0 (xG + Kelly)**\n\n`/pronostico L vs V` | `/historial` | `/validar` | `/partidos` | `/tabla`"
+    help_text = (
+        "🤖 **SISTEMA V5.0 GROQ-SAMBA**\n\n"
+        "📈 **ANÁLISIS:**\n"
+        "• `/pronostico Local vs Visitante`: Análisis estadístico + Criterio de Kelly.\n"
+        "• `/historial`: Muestra los últimos pronósticos y su estado (WIN/LOSS).\n"
+        "• `/validar`: Sincroniza resultados terminados y actualiza el historial en GitHub.\n"
+        "• `/config`: Configura los modelos de IA (Estratega y Auditor) vía Groq o SambaNova.\n\n"
+        "⚽ **INFORMACIÓN:**\n"
+        "• `/partidos`: Próximos encuentros programados (Hora Juárez).\n"
+        "• `/tabla`: Posiciones actuales de la liga.\n"
+        "• `/equipos`: Lista de equipos disponibles en el motor estadístico JSON.\n\n"
+        "💡 *Nota: El sistema utiliza una combinación de Poisson y APIs de mercado para detectar valor real.*"
+    )
     await bot.reply_to(message, help_text, parse_mode='Markdown')
 
 async def main(): 
     await bot.delete_webhook(drop_pending_updates=True)
     await bot.polling(non_stop=True)
 
-if __name__ == "__main__": asyncio.run(main())
+if __name__ == "__main__": 
+    asyncio.run(main())
