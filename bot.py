@@ -323,36 +323,41 @@ async def cmd_equipos(message):
     equipos = ", ".join([f"`{e}`" for e in res[liga]['teams'].keys()])
     await bot.reply_to(message, f"📋 **EQUIPOS JSON:**\n\n{equipos}", parse_mode='Markdown')
 
-# --- Gestión de Nodos y Configuración ---
+# --- Gestión de Nodos y Configuración (Corrección de callback_data) ---
 @bot.message_handler(commands=['config'])
 async def cmd_config(message):
-    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🧠 ASIGNAR ESTRATEGA", callback_data="set_rol_estratega"))
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🧠 ASIGNAR ESTRATEGA", callback_data="rol_est"))
     await bot.reply_to(message, "🛠 **CONFIGURACIÓN DE RED**", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('set_rol_'))
+@bot.callback_query_handler(func=lambda call: call.data.startswith('rol_'))
 async def cb_rol(call):
-    rol = call.data.split('_')[-1]
+    rol_code = call.data.split('_')[-1] # 'est' o 'aud'
     markup = InlineKeyboardMarkup().row(
-        InlineKeyboardButton("Groq", callback_data=f"set_api_{rol}_GROQ"),
-        InlineKeyboardButton("SambaNova", callback_data=f"set_api_{rol}_SAMBA")
+        InlineKeyboardButton("Groq", callback_data=f"api_{rol_code}_G"),
+        InlineKeyboardButton("SambaNova", callback_data=f"api_{rol_code}_S")
     )
-    await bot.edit_message_text(f"API para {rol.upper()}:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+    await bot.edit_message_text(f"API para {rol_code.upper()}:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('set_api_'))
+@bot.callback_query_handler(func=lambda call: call.data.startswith('api_'))
 async def cb_api(call):
-    _, _, rol, api = call.data.split('_')
-    nodos = SISTEMA_IA["nodos_groq"] if api == 'GROQ' else SISTEMA_IA["nodos_samba"]
+    _, rol_code, api_code = call.data.split('_')
+    nodos = SISTEMA_IA["nodos_groq"] if api_code == 'G' else SISTEMA_IA["nodos_samba"]
     markup = InlineKeyboardMarkup()
     for n in nodos:
-        markup.add(InlineKeyboardButton(n, callback_data=f"save_nodo_{rol}_{api}_{n}"))
+        # 'sv' es el prefijo para save, reducimos todo para que quepa el nombre del nodo
+        markup.add(InlineKeyboardButton(n, callback_data=f"sv_{rol_code}_{api_code}_{n}"[:64]))
     await bot.edit_message_text(f"Selecciona Nodo:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('save_nodo_'))
+@bot.callback_query_handler(func=lambda call: call.data.startswith('sv_'))
 async def cb_save(call):
-    _, _, rol, api, nodo = call.data.split('_')
+    _, rol_code, api_code, nodo = call.data.split('_')
+    rol = "estratega" if rol_code == "est" else "auditor"
+    api = "GROQ" if api_code == "G" else "SAMBA"
+    
     SISTEMA_IA[rol] = {"api": api, "nodo": nodo}
+    
     markup = InlineKeyboardMarkup()
-    if rol == "estratega": markup.add(InlineKeyboardButton("⚖️ AÑADIR AUDITOR", callback_data="set_rol_auditor"))
+    if rol == "estratega": markup.add(InlineKeyboardButton("⚖️ AÑADIR AUDITOR", callback_data="rol_aud"))
     markup.add(InlineKeyboardButton("🏁 FINALIZAR", callback_data="config_fin"))
     await bot.edit_message_text(f"✅ {rol.upper()} listo: `{nodo}`", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
