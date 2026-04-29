@@ -135,16 +135,22 @@ async def api_football_call(endpoint):
     except: return None
 
 async def obtener_h2h_directo(id_l, id_v):
-    """Nueva versión utilizando IDs directos del JSON"""
-    if not id_l or not id_v: return "H2H: Sin IDs válidos.", False
+    """Versión ajustada con LOGS para Railway"""
+    if not id_l or not id_v: 
+        logging.warning(f"⚠️ H2H abortado: IDs faltantes (L: {id_l}, V: {id_v})")
+        return "H2H: Sin IDs válidos.", False
     
     headers = {'X-Auth-Token': FOOTBALL_DATA_KEY}
     try:
         url = f"https://api.football-data.org/v4/teams/{id_l}/matches?competitors={id_v}&status=FINISHED"
+        logging.info(f"📡 Consultando H2H Railway: {url}")
+        
         r = await asyncio.to_thread(requests.get, url, headers=headers, timeout=10)
+        logging.info(f"📡 Respuesta API H2H: Código {r.status_code}")
         
         if r.status_code == 200:
             matches = r.json().get('matches', [])
+            logging.info(f"🏟 Partidos H2H encontrados: {len(matches)}")
             if matches:
                 l, v, e = 0, 0, 0
                 for m in matches[:5]:
@@ -153,8 +159,13 @@ async def obtener_h2h_directo(id_l, id_v):
                     elif w == 'AWAY_TEAM': v += 1
                     else: e += 1
                 return f"Local {l} | Visitante {v} | Empates {e}", True
+        else:
+            logging.error(f"❌ Error API H2H: {r.text}")
+            
         return "H2H: Sin datos directos.", False
-    except: return "H2H: Error API.", False
+    except Exception as ex: 
+        logging.error(f"💥 Error crítico H2H: {str(ex)}")
+        return "H2H: Error API.", False
 
 # --- Comando Principal: Pronóstico ---
 @bot.message_handler(commands=['pronostico', 'valor'])
@@ -191,6 +202,10 @@ async def handle_pronostico(message):
     # Extraer IDs del JSON para el nuevo H2H
     id_api_l = l_s.get("id_api")
     id_api_v = v_s.get("id_api")
+    
+    # LOG PARA RAILWAY
+    logging.info(f"🔍 Equipos detectados: {m_l} (ID: {id_api_l}) vs {m_v} (ID: {id_api_v})")
+    
     h2h, check_h2h = await obtener_h2h_directo(id_api_l, id_api_v)
 
     avg = full_data[liga]['averages']
