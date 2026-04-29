@@ -17,10 +17,10 @@ logging.basicConfig(level=logging.INFO)
 load_dotenv()
 
 TOKEN = os.getenv('TOKEN_TELEGRAM')
-GROQ_KEY = os.getenv('GROQ_KEY')
+GROQ_KEY = os.getenv('GROQ_API_KEY')
 SAMBA_KEY = os.getenv('SAMBA_KEY')
 FOOTBALL_DATA_KEY = os.getenv('FOOTBALL_DATA_KEY')
-ODDS_API_KEY = os.getenv('ODDS_API_KEY')
+ODDS_API_KEY = os.getenv('API_KEY_ODDS')
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
 
 OFFSET_JUAREZ = -6
@@ -58,12 +58,26 @@ async def guardar_en_github(nuevo_registro=None, historial_completo=None):
     except Exception as e:
         logging.error(f"Error GitHub: {e}")
 
-# --- Estado Global ---
+# --- Estado Global (ACTUALIZADO) ---
 SISTEMA_IA = {
     "estratega": {"api": None, "nodo": None},
     "auditor": {"api": None, "nodo": None},
-    "nodos_groq": ['llama-3.3-70b-versatile', 'llama3-70b-8192', 'mixtral-8x7b-32768'],
-    "nodos_samba": ['Meta-Llama-3.3-70B-Instruct', 'Meta-Llama-3.1-405B-Instruct', 'Llama-3.1-Tulu-3-405B']
+
+    "nodos_samba": [
+        "DeepSeek-V3.1",
+        "DeepSeek-V3.1-cb",
+        "DeepSeek-V3.2",
+        "Llama-4-Maverick-17B-128E-Instruct",
+        "Meta-Llama-3.3-70B-Instruct"
+    ],
+
+    "nodos_groq": [
+        "llama-3.3-70b-versatile",
+        "groq/compound-mini",
+        "meta-llama/llama-4-scout-17b-16e-instruct",
+        "llama-3.1-8b-instant",
+        "groq/compound"
+    ]
 }
 
 # --- Motores de IA (Groq & SambaNova) ---
