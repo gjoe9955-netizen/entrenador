@@ -134,17 +134,16 @@ async def api_football_call(endpoint):
         return r.json() if r.status_code == 200 else None
     except: return None
 
-async def obtener_h2h_directo(equipo_l, equipo_v):
+async def obtener_h2h_directo(id_l, id_v):
+    """Nueva versión utilizando IDs directos del JSON"""
+    if not id_l or not id_v: return "H2H: Sin IDs válidos.", False
+    
     headers = {'X-Auth-Token': FOOTBALL_DATA_KEY}
     try:
-        data = await api_football_call("teams")
-        teams = data.get('teams', []) if data else []
-        id_l = next((t['id'] for t in teams if equipo_l.lower() in t['shortName'].lower() or t['shortName'].lower() in equipo_l.lower()), None)
-        id_v = next((t['id'] for t in teams if equipo_v.lower() in t['shortName'].lower() or t['shortName'].lower() in equipo_v.lower()), None)
+        url = f"https://api.football-data.org/v4/teams/{id_l}/matches?competitors={id_v}&status=FINISHED"
+        r = await asyncio.to_thread(requests.get, url, headers=headers, timeout=10)
         
-        if id_l and id_v:
-            url = f"https://api.football-data.org/v4/teams/{id_l}/matches?competitors={id_v}&status=FINISHED"
-            r = await asyncio.to_thread(requests.get, url, headers=headers)
+        if r.status_code == 200:
             matches = r.json().get('matches', [])
             if matches:
                 l, v, e = 0, 0, 0
@@ -170,14 +169,17 @@ async def handle_pronostico(message):
     l_q, v_q = [t.strip() for t in parts[1].split(" vs ")]
     msg_espera = await bot.reply_to(message, "📡 Consultando APIs y Poisson...")
 
-    raw_json = requests.get(URL_JSON)
-    full_data = raw_json.json()
-    check_json = True if raw_json.status_code == 200 else False
-    
+    try:
+        raw_json = requests.get(URL_JSON)
+        full_data = raw_json.json()
+        check_json = True if raw_json.status_code == 200 else False
+    except:
+        await bot.edit_message_text("❌ Error al cargar el JSON del servidor.", message.chat.id, msg_espera.message_id); return
+
     c_l, c_e, c_v, check_odds = await obtener_datos_mercado(l_q)
-    h2h, check_h2h = await obtener_h2h_directo(l_q, v_q)
 
     liga = next(iter(full_data))
+    # Búsqueda mejorada para encontrar los nombres exactos en el JSON
     m_l = next((t for t in full_data[liga]['teams'] if t.lower() in l_q.lower() or l_q.lower() in t.lower()), None)
     m_v = next((t for t in full_data[liga]['teams'] if t.lower() in v_q.lower() or v_q.lower() in t.lower()), None)
     
@@ -185,6 +187,12 @@ async def handle_pronostico(message):
         await bot.edit_message_text("❌ Equipo no encontrado en el JSON.", message.chat.id, msg_espera.message_id); return
 
     l_s, v_s = full_data[liga]['teams'][m_l], full_data[liga]['teams'][m_v]
+    
+    # Extraer IDs del JSON para el nuevo H2H
+    id_api_l = l_s.get("id_api")
+    id_api_v = v_s.get("id_api")
+    h2h, check_h2h = await obtener_h2h_directo(id_api_l, id_api_v)
+
     avg = full_data[liga]['averages']
     lh = l_s['att_h'] * v_s['def_a'] * avg['league_home']
     la = v_s['att_a'] * l_s['def_h'] * avg['league_away']
