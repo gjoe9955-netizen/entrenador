@@ -8,7 +8,8 @@
         "edge": "-3.0%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-28 22:54",
@@ -19,7 +20,8 @@
         "edge": "-3.0%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-28 22:56",
@@ -30,7 +32,8 @@
         "edge": "-3.0%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-28 22:59",
@@ -41,7 +44,8 @@
         "edge": "-3.0%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-28 23:04",
@@ -52,7 +56,8 @@
         "edge": "2.0%",
         "stake": "0.99%",
         "nivel": "ORO 🥇",
-        "status": "⏳ PENDIENTE"
+        "status": "✅ WIN",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-28 23:17",
@@ -63,7 +68,8 @@
         "edge": "2.0%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "❌ LOSS",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-28 23:29",
@@ -74,7 +80,8 @@
         "edge": "2.0%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "❌ LOSS",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-28 23:30",
@@ -85,7 +92,8 @@
         "edge": "2.0%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "❌ LOSS",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-28 23:32",
@@ -96,7 +104,8 @@
         "edge": "2.0%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "❌ LOSS",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-28 23:34",
@@ -107,7 +116,8 @@
         "edge": "2.0%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "❌ LOSS",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-28 23:38",
@@ -118,7 +128,8 @@
         "edge": "2.0%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "❌ LOSS",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-28 23:45",
@@ -129,7 +140,8 @@
         "edge": "2.0%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "❌ LOSS",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-28 23:55",
@@ -140,7 +152,8 @@
         "edge": "2.0%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "❌ LOSS",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-29 00:29",
@@ -151,7 +164,8 @@
         "edge": "2.0%",
         "stake": "0.99%",
         "nivel": "ORO 🥇",
-        "status": "⏳ PENDIENTE"
+        "status": "✅ WIN",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-29 00:33",
@@ -162,7 +176,8 @@
         "edge": "2.0%",
         "stake": "0.99%",
         "nivel": "ORO 🥇",
-        "status": "⏳ PENDIENTE"
+        "status": "✅ WIN",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-29 00:39",
@@ -173,7 +188,8 @@
         "edge": "2.0%",
         "stake": "0.99%",
         "nivel": "ORO 🥇",
-        "status": "⏳ PENDIENTE"
+        "status": "✅ WIN",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-29 00:44",
@@ -184,7 +200,8 @@
         "edge": "-9.1%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "2-1"
     },
     {
         "fecha": "2026-04-29 01:16",
@@ -195,7 +212,8 @@
         "edge": "-8.9%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "2-1"
     },
     {
         "fecha": "2026-04-29 01:37",
@@ -206,7 +224,8 @@
         "edge": "-8.2%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "2-1"
     },
     {
         "fecha": "2026-04-29 01:42",
@@ -217,7 +236,8 @@
         "edge": "-8.2%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "2-1"
     },
     {
         "fecha": "2026-04-29 01:55",
@@ -228,7 +248,8 @@
         "edge": "-8.2%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "2-1"
     },
     {
         "fecha": "2026-04-29 01:56",
@@ -239,7 +260,8 @@
         "edge": "-8.2%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "2-1"
     },
     {
         "fecha": "2026-04-29 02:14",
@@ -250,7 +272,8 @@
         "edge": "-8.2%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "2-1"
     },
     {
         "fecha": "2026-04-29 02:16",
@@ -261,6 +284,7 @@
         "edge": "2.7%",
         "stake": "1.32%",
         "nivel": "ORO 🥇",
-        "status": "⏳ PENDIENTE"
+        "status": "✅ WIN",
+        "marcador_real": "1-2"
     }
 ]
