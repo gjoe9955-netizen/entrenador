@@ -39,7 +39,9 @@ async def obtener_contexto_real(l_q, v_q):
         return "No hay API Key de Serper configurada."
     
     url = "https://google.serper.dev/search"
-    query = f"alineaciones confirmadas bajas lesiones {l_q} vs {v_q}"
+    # AJUSTE 1: Query optimizada con operadores avanzados para evitar ruido de otros equipos
+    query = f'(site:jornadaperfecta.com OR site:futbolfantasy.com) "{l_q}" "{v_q}" alineación'
+    
     payload = json.dumps({
         "q": query,
         "gl": "es",
@@ -165,7 +167,6 @@ async def api_football_call(endpoint):
     except: return None
 
 async def obtener_h2h_directo(id_l, id_v):
-    """Versión ajustada con LOGS para Railway"""
     if not id_l or not id_v: 
         logging.warning(f"⚠️ H2H abortado: IDs faltantes (L: {id_l}, V: {id_v})")
         return "H2H: Sin IDs válidos.", False
@@ -225,7 +226,6 @@ async def handle_pronostico(message):
     contexto_noticias = await task_news
 
     liga = next(iter(full_data))
-    # Búsqueda mejorada para encontrar los nombres exactos en el JSON
     m_l = next((t for t in full_data[liga]['teams'] if t.lower() in l_q.lower() or l_q.lower() in t.lower()), None)
     m_v = next((t for t in full_data[liga]['teams'] if t.lower() in v_q.lower() or v_q.lower() in t.lower()), None)
     
@@ -233,12 +233,9 @@ async def handle_pronostico(message):
         await bot.edit_message_text("❌ Equipo no encontrado en el JSON.", message.chat.id, msg_espera.message_id); return
 
     l_s, v_s = full_data[liga]['teams'][m_l], full_data[liga]['teams'][m_v]
-    
-    # Extraer IDs del JSON para el nuevo H2H
     id_api_l = l_s.get("id_api")
     id_api_v = v_s.get("id_api")
     
-    # LOG PARA RAILWAY
     logging.info(f"🔍 Equipos detectados: {m_l} (ID: {id_api_l}) vs {m_v} (ID: {id_api_v})")
     
     h2h, check_h2h = await obtener_h2h_directo(id_api_l, id_api_v)
@@ -317,15 +314,16 @@ async def handle_pronostico(message):
     footer = f"\n\n{'—'*20}\n🛰 <b>ESTRATEGA:</b> <code>{SISTEMA_IA['estratega']['api']}</code> ({SISTEMA_IA['estratega']['nodo']})"
 
     if SISTEMA_IA["auditor"]["nodo"]:
-        # El Auditor recibe ahora las noticias de Serper para validar el Stake
+        # AJUSTE 2: Nuevo Prompt de Auditor con instrucción de descarte para evitar noticias irrelevantes
         prompt_a = (
             f"ERES EL AUDITOR DE RIESGO. Tu objetivo es validar el análisis del Estratega usando información de última hora de Google.\n\n"
             f"ANÁLISIS ESTRATEGA: '{analisis_raw}'\n"
             f"POISSON: {p_percent:.1f}%\n\n"
             f"NOTICIAS DE ÚLTIMA HORA (GOOGLE):\n{contexto_noticias}\n\n"
-            f"TAREA:\n"
-            f"1. Si las noticias mencionan bajas clave o alineaciones que afecten al favorito, ordena ajustar o cancelar el Stake.\n"
-            f"2. Emite un VEREDICTO corto indicando si la información de Google respalda o contradice el pick estadístico."
+            f"TAREA CRÍTICA:\n"
+            f"1. Si las noticias proporcionadas NO mencionan explícitamente a {m_l} o {m_v}, ignora por completo la sección de noticias y básate solo en el cálculo de Poisson. No inventes contexto de otros equipos (como Real Madrid, Betis, etc).\n"
+            f"2. Si las noticias mencionan bajas clave o alineaciones confirmadas que afecten al favorito, ordena ajustar o cancelar el Stake.\n"
+            f"3. Emite un VEREDICTO corto indicando si la información de Google respalda o contradice el pick estadístico."
         )
         auditoria_raw = await ejecutar_ia("auditor", prompt_a)
         auditoria = html.escape(auditoria_raw)
