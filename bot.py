@@ -168,97 +168,105 @@ async def handle_pronostico(message):
     l_q, v_q = [t.strip() for t in parts[1].split(" vs ")]
     msg_espera = await bot.reply_to(message, "📡 Ejecutando Protocolo de Análisis Avanzado...")
 
-    raw_json = requests.get(URL_JSON)
-    full_data = raw_json.json()
-    check_json = True if raw_json.status_code == 200 else False
-    
-    c_l, c_e, c_v, check_odds = await obtener_datos_mercado(l_q)
-    h2h, check_h2h = await obtener_h2h_directo(l_q, v_q)
+    try:
+        raw_json = requests.get(URL_JSON)
+        full_data = raw_json.json()
+        check_json = True if raw_json.status_code == 200 else False
+        
+        c_l, c_e, c_v, check_odds = await obtener_datos_mercado(l_q)
+        h2h, check_h2h = await obtener_h2h_directo(l_q, v_q)
 
-    liga = next(iter(full_data))
-    m_l = next((t for t in full_data[liga]['teams'] if t.lower() in l_q.lower() or l_q.lower() in t.lower()), None)
-    m_v = next((t for t in full_data[liga]['teams'] if t.lower() in v_q.lower() or v_q.lower() in t.lower()), None)
-    
-    if not m_l or not m_v:
-        await bot.edit_message_text("❌ Equipo no encontrado en el JSON.", message.chat.id, msg_espera.message_id); return
+        liga = next(iter(full_data))
+        m_l = next((t for t in full_data[liga]['teams'] if t.lower() in l_q.lower() or l_q.lower() in t.lower()), None)
+        m_v = next((t for t in full_data[liga]['teams'] if t.lower() in v_q.lower() or v_q.lower() in t.lower()), None)
+        
+        if not m_l or not m_v:
+            await bot.edit_message_text("❌ Equipo no encontrado en el JSON.", message.chat.id, msg_espera.message_id); return
 
-    l_s, v_s = full_data[liga]['teams'][m_l], full_data[liga]['teams'][m_v]
-    avg = full_data[liga]['averages']
-    lh = l_s['att_h'] * v_s['def_a'] * avg['league_home']
-    la = v_s['att_a'] * l_s['def_h'] * avg['league_away']
-    
-    ph, pd, pa = 0, 0, 0
-    for x in range(6):
-        for y in range(6):
-            p = poisson.pmf(x, lh) * poisson.pmf(y, la)
-            if x > y: ph += p
-            elif x == y: pd += p
-            else: pa += p
+        l_s, v_s = full_data[liga]['teams'][m_l], full_data[liga]['teams'][m_v]
+        avg = full_data[liga]['averages']
+        lh = l_s['att_h'] * v_s['def_a'] * avg['league_home']
+        la = v_s['att_a'] * l_s['def_h'] * avg['league_away']
+        
+        ph, pd, pa = 0, 0, 0
+        for x in range(6):
+            for y in range(6):
+                p = poisson.pmf(x, lh) * poisson.pmf(y, la)
+                if x > y: ph += p
+                elif x == y: pd += p
+                else: pa += p
 
-    p_win = ph 
-    prob_implied = 1 / c_l
-    edge_real = p_win - prob_implied
-    
-    # Decisión de Pick Basada en Kelly y Edge Mínimo (3%)
-    pick_final = m_l
-    if edge_real > 0.03:
-        kelly = ((c_l * p_win) - 1) / (c_l - 1)
-        stake_final = round(kelly * 0.25 * 100, 2)
-        stake_final = max(0, min(stake_final, 5)) 
-        nivel = "DIAMANTE 💎" if edge_real > 0.07 else ("ORO 🥇" if edge_real > 0.04 else "PLATA 🥈")
-    else:
-        stake_final = 0
-        pick_final = "NO APOSTAR (Sin Valor)"
-        nivel = "RIESGO ALTO / SIN VALOR ⚠️"
+        p_win = ph 
+        prob_implied = 1 / c_l
+        edge_real = p_win - prob_implied
+        
+        pick_final = m_l
+        if edge_real > 0.03:
+            kelly = ((c_l * p_win) - 1) / (c_l - 1)
+            stake_final = round(kelly * 0.25 * 100, 2)
+            stake_final = max(0, min(stake_final, 5)) 
+            nivel = "DIAMANTE 💎" if edge_real > 0.07 else ("ORO 🥇" if edge_real > 0.04 else "PLATA 🥈")
+        else:
+            stake_final = 0
+            pick_final = "NO APOSTAR (Sin Valor)"
+            nivel = "RIESGO ALTO / SIN VALOR ⚠️"
 
-    asyncio.create_task(guardar_en_github(nuevo_registro={
-        "fecha": (datetime.utcnow() + timedelta(hours=OFFSET_JUAREZ)).strftime('%Y-%m-%d %H:%M'),
-        "partido": f"{m_l} vs {m_v}",
-        "pick": pick_final,
-        "poisson": f"{p_win*100:.1f}%",
-        "cuota": c_l,
-        "edge": f"{edge_real*100:.1f}%",
-        "stake": f"{stake_final}%",
-        "nivel": nivel,
-        "status": "⏳ PENDIENTE"
-    }))
+        asyncio.create_task(guardar_en_github(nuevo_registro={
+            "fecha": (datetime.utcnow() + timedelta(hours=OFFSET_JUAREZ)).strftime('%Y-%m-%d %H:%M'),
+            "partido": f"{m_l} vs {m_v}",
+            "pick": pick_final,
+            "poisson": f"{p_win*100:.1f}%",
+            "cuota": c_l,
+            "edge": f"{edge_real*100:.1f}%",
+            "stake": f"{stake_final}%",
+            "nivel": nivel,
+            "status": "⏳ PENDIENTE"
+        }))
 
-    header = (f"🛠 REPORTE: {'✅' if check_odds else '❌'} Cuotas | "
-              f"{'✅' if check_json else '❌'} Poisson | "
-              f"{'✅' if check_h2h else '❌'} xG/H2H\n"
-              f"————————————————————\n")
-    
-    # --- PROMPT ESTRATEGA ACTUALIZADO ---
-    prompt_e = (
-        f"ERES UN ANALISTA DE ÉLITE. Evalúa: {m_l} vs {m_v}.\n"
-        f"VARIABLES:\n- Poisson Base: {p_win*100:.1f}%\n- Cuota Mercado: {c_l}\n- Implicada: {prob_implied*100:.1f}%\n- H2H: {h2h}\n\n"
-        f"INSTRUCCIONES:\n"
-        f"1. Genera una P_Final ponderada (60% Poisson / 40% xG actual de 2026).\n"
-        f"2. Calcula la 'Cuota Justa' (1 / P_Final). Si Cuota Mercado < Cuota Justa, advierte que NO HAY VALOR.\n"
-        f"3. Si el H2H contradice la estadística, baja la confianza.\n\n"
-        f"FORMATO DE RESPUESTA:\n🎯 PICK: {pick_final}\n📈 NIVEL: {nivel}\n💰 STAKE: {stake_final}%\n"
-        f"🔬 MÉTRICAS: P_Final [X%], Cuota Justa [X], Edge [X%]\n"
-        f"📝 ANÁLISIS: (Argumento breve sobre xG, Poisson y H2H)."
-    )
-    
-    analisis = await ejecutar_ia("estratega", prompt_e)
-    footer = f"\n\n{'—'*20}\n🛰 **MODO:** xG + Poisson + Kelly"
-
-    # --- PROMPT AUDITOR ACTUALIZADO ---
-    if SISTEMA_IA["auditor"]["nodo"]:
-        prompt_a = (
-            f"ERES UN AUDITOR CRÍTICO. Evalúa la validez de este análisis: '{analisis}'.\n"
-            f"DATOS DE CONTROL: H2H: {h2h} | Cuota: {c_l}.\n"
-            f"REGLA: Si la probabilidad final es optimista frente al H2H, exige precaución.\n"
-            f"Responde solo: VEREDICTO (APROBADO/RECHAZADO/PRECAUCIÓN) y RAZÓN (1 línea)."
+        header = (f"🛠 REPORTE: {'✅' if check_odds else '❌'} Cuotas | "
+                  f"{'✅' if check_json else '❌'} Poisson | "
+                  f"{'✅' if check_h2h else '❌'} xG/H2H\n"
+                  f"————————————————————\n")
+        
+        # --- LÓGICA DE TRUNCADO A 1500 CARACTERES ---
+        prompt_e_raw = (
+            f"ERES UN ANALISTA DE ÉLITE. Evalúa: {m_l} vs {m_v}.\n"
+            f"VARIABLES:\n- Poisson Base: {p_win*100:.1f}%\n- Cuota Mercado: {c_l}\n- H2H: {h2h}\n\n"
+            f"INSTRUCCIONES:\n"
+            f"1. P_Final (60% Poisson / 40% xG actual 2026).\n"
+            f"2. Cuota Justa (1 / P_Final). Si Mercado < Justa, advierte.\n"
+            f"FORMATO:\n🎯 PICK: {pick_final}\n📈 NIVEL: {nivel}\n💰 STAKE: {stake_final}%\n"
+            f"🔬 MÉTRICAS: P_Final [%], Cuota Justa, Edge [%]\n"
+            f"📝 ANÁLISIS: Breve (máx 3 líneas)."
         )
-        auditoria = await ejecutar_ia("auditor", prompt_a)
-        footer += f"\n🛡 **AUDITOR:** `{SISTEMA_IA['auditor']['nodo']}`"
-        final = f"{header}{analisis}\n\n{auditoria}{footer}"
-    else:
-        final = f"{header}{analisis}{footer}"
+        prompt_e = prompt_e_raw[:1500]
+        
+        analisis = await ejecutar_ia("estratega", prompt_e)
+        footer = f"\n\n{'—'*20}\n🛰 **MODO:** xG + Poisson + Kelly"
 
-    await bot.edit_message_text(final, message.chat.id, msg_espera.message_id, parse_mode='Markdown')
+        if SISTEMA_IA["auditor"]["nodo"]:
+            # Escapar nombre del nodo para evitar error 400
+            nodo_nombre = SISTEMA_IA['auditor']['nodo'].replace('_', '\\_')
+            prompt_a_raw = (
+                f"ERES UN AUDITOR CRÍTICO. Evalúa: '{analisis}'.\n"
+                f"DATOS: H2H: {h2h} | Cuota: {c_l}.\n"
+                f"Responde solo: VEREDICTO y RAZÓN (1 línea)."
+            )
+            auditoria = await ejecutar_ia("auditor", prompt_a_raw[:1500])
+            footer += f"\n🛡 **AUDITOR:** `{nodo_nombre}`"
+            final = f"{header}{analisis}\n\n{auditoria}{footer}"
+        else:
+            final = f"{header}{analisis}{footer}"
+
+        # Envío con manejo de errores de Markdown
+        try:
+            await bot.edit_message_text(final, message.chat.id, msg_espera.message_id, parse_mode='Markdown')
+        except:
+            await bot.edit_message_text(final, message.chat.id, msg_espera.message_id)
+
+    except Exception as e:
+        logging.error(f"Error Pronóstico: {e}")
+        await bot.edit_message_text("❌ Error crítico en el análisis.", message.chat.id, msg_espera.message_id)
 
 # --- Gestión de Historial y Validación ---
 @bot.message_handler(commands=['historial'])
@@ -385,5 +393,9 @@ async def cmd_help(message):
     )
     await bot.reply_to(message, help_text, parse_mode='Markdown')
 
-async def main(): await bot.polling(non_stop=True)
-if __name__ == "__main__": asyncio.run(main())
+async def main(): 
+    await bot.delete_webhook(drop_pending_updates=True) # Limpia el error 409
+    await bot.polling(non_stop=True)
+
+if __name__ == "__main__": 
+    asyncio.run(main())
