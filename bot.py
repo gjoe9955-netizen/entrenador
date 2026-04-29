@@ -7,8 +7,6 @@ import base64
 from scipy.stats import poisson
 from datetime import datetime, timedelta
 
-from google import genai
-from google.genai import types
 import telebot
 from telebot.async_telebot import AsyncTeleBot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -19,8 +17,8 @@ logging.basicConfig(level=logging.INFO)
 load_dotenv()
 
 TOKEN = os.getenv('TOKEN_TELEGRAM')
-GEMINI_KEY = os.getenv('GEMINI_KEY')
-NVIDIA_KEY = os.getenv('NVIDIA_KEY')
+GROQ_KEY = os.getenv('GROQ_KEY')
+SAMBA_KEY = os.getenv('SAMBA_KEY')
 FOOTBALL_DATA_KEY = os.getenv('FOOTBALL_DATA_KEY')
 ODDS_API_KEY = os.getenv('ODDS_API_KEY')
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
@@ -64,34 +62,48 @@ async def guardar_en_github(nuevo_registro=None, historial_completo=None):
 SISTEMA_IA = {
     "estratega": {"api": None, "nodo": None},
     "auditor": {"api": None, "nodo": None},
-    "nodos_gemini": ['gemini-2.5-flash-lite', 'gemini-3.1-flash-lite-preview'],
-    "nodos_nvidia": ['meta/llama-3.3-70b-instruct', 'meta/llama-3.1-8b-instruct']
+
+    "nodos_samba": [
+        "DeepSeek-V3.1",
+        "DeepSeek-V3.1-cb",
+        "DeepSeek-V3.2",
+        "Llama-4-Maverick-17B-128E-Instruct",
+        "Meta-Llama-3.3-70B-Instruct"
+    ],
+
+    "nodos_groq": [
+        "llama-3.3-70b-versatile",
+        "groq/compound-mini",
+        "meta-llama/llama-4-scout-17b-16e-instruct",
+        "llama-3.1-8b-instant",
+        "groq/compound"
+    ]
 }
 
-# --- Motores de IA ---
+# --- Motores de IA (Groq & SambaNova) ---
 async def ejecutar_ia(rol, prompt):
     config = SISTEMA_IA[rol]
     if not config["nodo"]: return None
     
-    if config["api"] == 'GEMINI':
-        client = genai.Client(api_key=GEMINI_KEY)
-        try:
-            res = await asyncio.to_thread(
-                client.models.generate_content, 
-                model=config["nodo"], 
-                contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.1)
-            )
-            return res.text
-        except: return "❌ Error en Nodo Gemini"
+    if config["api"] == 'GROQ':
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
     else:
-        url = "https://integrate.api.nvidia.com/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {NVIDIA_KEY}", "Content-Type": "application/json"}
-        payload = {"model": config["nodo"], "messages": [{"role": "user", "content": prompt}], "temperature": 0.1}
-        try:
-            r = await asyncio.to_thread(requests.post, url, headers=headers, json=payload, timeout=15)
-            return r.json()['choices'][0]['message']['content']
-        except: return "❌ Error en Nodo NVIDIA"
+        url = "https://api.sambanova.ai/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {SAMBA_KEY}", "Content-Type": "application/json"}
+
+    payload = {
+        "model": config["nodo"],
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1
+    }
+
+    try:
+        r = await asyncio.to_thread(requests.post, url, headers=headers, json=payload, timeout=15)
+        return r.json()['choices'][0]['message']['content']
+    except Exception as e:
+        logging.error(f"Error IA {config['api']}: {e}")
+        return f"❌ Error en Nodo {config['api']}"
 
 # --- Núcleo Estadístico y APIs ---
 async def obtener_datos_mercado(equipo_l):
@@ -200,7 +212,6 @@ async def handle_pronostico(message):
     elif edge_real > 0: nivel = "PLATA 🥈"
     else: nivel = "RIESGO ALTO / SIN VALOR ⚠️"
 
-    # Guardar en GitHub
     asyncio.create_task(guardar_en_github(nuevo_registro={
         "fecha": (datetime.utcnow() + timedelta(hours=OFFSET_JUAREZ)).strftime('%Y-%m-%d %H:%M'),
         "partido": f"{m_l} vs {m_v}",
@@ -270,7 +281,6 @@ async def cmd_validar(message):
                     h_api, a_api = m['homeTeam']['shortName'].lower(), m['awayTeam']['shortName'].lower()
                     if h_api in item['partido'].lower() and a_api in item['partido'].lower():
                         res = m['score']['winner']
-                        # Lógica de validación
                         if item['pick'] == "No Bet": item['status'] = "➖ VOID"
                         elif (res == 'HOME_TEAM' and h_api in item['pick'].lower()) or \
                              (res == 'AWAY_TEAM' and a_api in item['pick'].lower()):
@@ -323,15 +333,15 @@ async def cmd_config(message):
 async def cb_rol(call):
     rol = call.data.split('_')[-1]
     markup = InlineKeyboardMarkup().row(
-        InlineKeyboardButton("Gemini", callback_data=f"set_api_{rol}_GEMINI"),
-        InlineKeyboardButton("NVIDIA", callback_data=f"set_api_{rol}_NVIDIA")
+        InlineKeyboardButton("Groq", callback_data=f"set_api_{rol}_GROQ"),
+        InlineKeyboardButton("SambaNova", callback_data=f"set_api_{rol}_SAMBA")
     )
     await bot.edit_message_text(f"API para {rol.upper()}:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('set_api_'))
 async def cb_api(call):
     _, _, rol, api = call.data.split('_')
-    nodos = SISTEMA_IA["nodos_gemini"] if api == 'GEMINI' else SISTEMA_IA["nodos_nvidia"]
+    nodos = SISTEMA_IA["nodos_groq"] if api == 'GROQ' else SISTEMA_IA["nodos_samba"]
     markup = InlineKeyboardMarkup()
     for n in nodos:
         markup.add(InlineKeyboardButton(n, callback_data=f"save_nodo_{rol}_{api}_{n}"))
@@ -353,12 +363,12 @@ async def cb_fin(call):
 @bot.message_handler(commands=['help'])
 async def cmd_help(message):
     help_text = (
-        "🤖 **SISTEMA V4.9 VALIDATE-GIT**\n\n"
+        "🤖 **SISTEMA V5.0 GROQ-SAMBA**\n\n"
         "📈 **ANÁLISIS:**\n"
         "• `/pronostico Local vs Visitante`: Análisis + Kelly.\n"
         "• `/historial`: Ver pronósticos y estados.\n"
-        "• `/validar`: Cierra resultados pendientes desde la API.\n"
-        "• `/config`: Nodos Estratega y Auditor.\n\n"
+        "• `/validar`: Cierra resultados pendientes.\n"
+        "• `/config`: Configurar Groq/SambaNova.\n\n"
         "⚽ **INFO:** `/partidos`, `/tabla`, `/equipos`."
     )
     await bot.reply_to(message, help_text, parse_mode='Markdown')
