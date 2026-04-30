@@ -296,7 +296,8 @@
         "edge": "2.7%",
         "stake": "1.32%",
         "nivel": "ORO 🥇",
-        "status": "⏳ PENDIENTE"
+        "status": "✅ WIN",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-29 11:18",
@@ -307,7 +308,8 @@
         "edge": "2.7%",
         "stake": "1.32%",
         "nivel": "ORO 🥇",
-        "status": "⏳ PENDIENTE"
+        "status": "✅ WIN",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-29 11:34",
@@ -318,7 +320,8 @@
         "edge": "2.7%",
         "stake": "1.32%",
         "nivel": "ORO 🥇",
-        "status": "⏳ PENDIENTE"
+        "status": "✅ WIN",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-29 11:56",
@@ -329,7 +332,8 @@
         "edge": "2.7%",
         "stake": "1.32%",
         "nivel": "ORO 🥇",
-        "status": "⏳ PENDIENTE"
+        "status": "✅ WIN",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-29 12:02",
@@ -340,7 +344,8 @@
         "edge": "2.7%",
         "stake": "1.32%",
         "nivel": "ORO 🥇",
-        "status": "⏳ PENDIENTE"
+        "status": "✅ WIN",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-29 12:04",
@@ -351,7 +356,8 @@
         "edge": "-8.2%",
         "stake": "0%",
         "nivel": "RIESGO ALTO / SIN VALOR ⚠️",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "2-1"
     },
     {
         "fecha": "2026-04-29 12:41",
@@ -362,7 +368,8 @@
         "edge": "-1.1%",
         "stake": "0%",
         "nivel": "NO BET 🚫",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "1-2"
     },
     {
         "fecha": "2026-04-29 12:46",
@@ -373,7 +380,8 @@
         "edge": "-0.8%",
         "stake": "0%",
         "nivel": "NO BET 🚫",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "2-0"
     },
     {
         "fecha": "2026-04-29 12:56",
@@ -384,7 +392,8 @@
         "edge": "-0.1%",
         "stake": "0%",
         "nivel": "NO BET 🚫",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "1-1"
     },
     {
         "fecha": "2026-04-30 00:13",
@@ -395,7 +404,8 @@
         "edge": "-0.1%",
         "stake": "0%",
         "nivel": "NO BET 🚫",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "1-1"
     },
     {
         "fecha": "2026-04-30 00:15",
@@ -406,6 +416,7 @@
         "edge": "-0.1%",
         "stake": "0%",
         "nivel": "NO BET 🚫",
-        "status": "⏳ PENDIENTE"
+        "status": "➖ VOID",
+        "marcador_real": "1-2"
     }
 ]
